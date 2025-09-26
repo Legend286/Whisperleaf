@@ -1,4 +1,5 @@
 using Veldrid;
+using Whisperleaf.Graphics.Scene;
 
 namespace Whisperleaf.Graphics.RenderPasses;
 
@@ -11,7 +12,7 @@ public class ClearPass : IRenderPass
         _clearColor = clearColor;
     }
     
-    public void Render(GraphicsDevice gd, CommandList cl)
+    public void Render(GraphicsDevice gd, CommandList cl, Camera camera = null)
     {
         cl.Begin();
         cl.SetFramebuffer(gd.MainSwapchain.Framebuffer);

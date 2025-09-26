@@ -12,18 +12,14 @@ public class PipelineFactory
         VertexLayoutDescription vertexLayout,
         Framebuffer target,
         bool enableDepth = false,
-        bool enableBlend = false)
+        bool enableBlend = false,
+        ResourceLayout[]? extraLayouts = null)
     {
         var factory = gd.ResourceFactory;
-
-        string vertexCode = File.ReadAllText(vertexPath);
-        string fragmentCode = File.ReadAllText(fragmentPath);
-
-        Shader[] shaders = factory.CreateFromSpirv(
-            new ShaderDescription(
-                ShaderStages.Vertex, System.Text.Encoding.UTF8.GetBytes(vertexCode), "main"),
-            new ShaderDescription(ShaderStages.Fragment, System.Text.Encoding.UTF8.GetBytes(fragmentCode), "main"));
         
+        Shader[] shaders = ShaderCache.GetShaderPair(gd, vertexPath, fragmentPath);
+
+        ResourceLayout[] layouts = extraLayouts ?? System.Array.Empty<ResourceLayout>();
         
         GraphicsPipelineDescription pd = new GraphicsPipelineDescription
         {
@@ -38,7 +34,7 @@ public class PipelineFactory
                 depthClipEnabled: true,
                 scissorTestEnabled: false),
             PrimitiveTopology = PrimitiveTopology.TriangleList,
-            ResourceLayouts = System.Array.Empty<ResourceLayout>(),
+            ResourceLayouts = layouts,
             ShaderSet = new ShaderSetDescription(
                 vertexLayouts: new VertexLayoutDescription[] { vertexLayout },
                 shaders: shaders),

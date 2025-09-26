@@ -9,7 +9,11 @@ public class Window
     private Sdl2Window sdlWindow;
 
     public GraphicsDevice graphicsDevice;
+    
+    public int Width => sdlWindow.Width;
+    public int Height => sdlWindow.Height;
 
+    public float AspectRatio => (float)Width / Height;
     public Window(int width, int height, string title)
     {
         GraphicsDeviceOptions gdopt = new GraphicsDeviceOptions{

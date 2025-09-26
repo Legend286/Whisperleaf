@@ -1,6 +1,7 @@
 ﻿using Veldrid;
 using Whisperleaf.Graphics;
 using Whisperleaf.Graphics.RenderPasses;
+using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Platform;
 
 namespace Whisperleaf;
@@ -11,10 +12,11 @@ class Program
     {
         var window = new Window(1280, 720, $"Whisperleaf Renderer");
 
+        var camera = new Camera(window.AspectRatio);
         var renderer = new Renderer(window);
-
-        renderer.AddPass(new ClearPass(RgbaFloat.CornflowerBlue));
-        renderer.AddPass(new TrianglePass(window.graphicsDevice));
+        
+        renderer.AddPass(new MeshPass(window.graphicsDevice, camera));
+        renderer.SetCamera(camera);
         renderer.Run();
     }
 }

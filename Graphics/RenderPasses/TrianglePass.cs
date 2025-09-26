@@ -1,5 +1,6 @@
 using Veldrid;
 using Veldrid.SPIRV;
+using Whisperleaf.Graphics.Scene;
 
 namespace Whisperleaf.Graphics.RenderPasses;
 
@@ -34,7 +35,7 @@ public class TrianglePass : IRenderPass
             vertexLayout, gd.MainSwapchain.Framebuffer);
     }
 
-    public void Render(GraphicsDevice gd, CommandList cl)
+    public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null)
     {
         cl.Begin();
         cl.SetFramebuffer(gd.MainSwapchain.Framebuffer);

@@ -6,10 +6,6 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
     </PropertyGroup>
-
-    <ItemGroup>
-      <Folder Include="Utilities\" />
-    </ItemGroup>
     
     <ItemGroup>
         <None Include="Graphics\Shaders\**\*.vert" CopyToOutputDirectory="PreserveNewest"/>
@@ -25,6 +21,10 @@
       <PackageReference Include="Veldrid.SDL2" Version="4.9.0" />
       <PackageReference Include="Veldrid.SPIRV" Version="1.0.15" />
       <PackageReference Include="Veldrid.StartupUtilities" Version="4.9.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Folder Include="Graphics\Camera\" />
     </ItemGroup>
 
 </Project>
