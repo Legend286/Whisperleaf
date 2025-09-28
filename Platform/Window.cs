@@ -9,18 +9,20 @@ public class Window
     private Sdl2Window sdlWindow;
 
     public GraphicsDevice graphicsDevice;
-    
+
     public int Width => sdlWindow.Width;
     public int Height => sdlWindow.Height;
 
     public float AspectRatio => (float)Width / Height;
+
     public Window(int width, int height, string title)
     {
-        GraphicsDeviceOptions gdopt = new GraphicsDeviceOptions{
+        GraphicsDeviceOptions gdopt = new GraphicsDeviceOptions
+        {
             Debug = false,
             HasMainSwapchain = true,
-            PreferDepthRangeZeroToOne = true, 
-            PreferStandardClipSpaceYDirection = true, 
+            PreferDepthRangeZeroToOne = true,
+            PreferStandardClipSpaceYDirection = true,
             ResourceBindingModel = ResourceBindingModel.Improved,
             SwapchainDepthFormat = PixelFormat.D32_Float_S8_UInt,
             SwapchainSrgbFormat = true,
@@ -36,7 +38,7 @@ public class Window
         {
             preferredBackend = GraphicsBackend.Metal;
         }
-        
+
         var wci = new WindowCreateInfo
         {
             X = 100,
@@ -45,10 +47,14 @@ public class Window
             WindowHeight = height,
             WindowTitle = $"{title} ({preferredBackend})"
         };
-        
+
         VeldridStartup.CreateWindowAndGraphicsDevice(wci, gdopt, preferredBackend, out sdlWindow, out graphicsDevice);
     }
 
     public bool Exists => sdlWindow.Exists;
-    public void PumpEvents() => sdlWindow.PumpEvents();
+    public InputSnapshot PumpEvents() => sdlWindow.PumpEvents();
+    
+    public (int X, int Y) GetMousePosition => ((int)PumpEvents().MousePosition.X,  (int)PumpEvents().MousePosition.Y);
+    public void SetMousePosition(int x, int y) => sdlWindow.SetMousePosition(x, y);
+    public void ShowCursor(bool visible) => sdlWindow.CursorVisible = visible;
 }
