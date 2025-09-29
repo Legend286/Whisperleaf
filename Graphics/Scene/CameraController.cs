@@ -11,7 +11,7 @@ public class CameraController
     private readonly InputManager _input;
     private readonly Window _window;
 
-    private float _speed = 3.0f;
+    private float _speed = 80.0f;
     private float _mouseSensitivity = 0.0025f;
 
     public CameraController(Camera camera, InputManager input, Window window)
@@ -21,11 +21,20 @@ public class CameraController
         _window = window;
     }
 
+    private bool initialCapture = true;
     public void Update(float deltaTime)
     {
         if (_input.IsButtonDown(MouseButton.Right))
         {
             _window.ShowCursor(false);
+            int centerX = _window.Width / 2;
+            int centerY = _window.Height / 2;
+
+            if (initialCapture)
+            {
+                _window.SetMousePosition(centerX, centerY);
+                initialCapture = false;
+            }
 
             HandleMovement(deltaTime);
             HandleMouse();
@@ -33,6 +42,7 @@ public class CameraController
         else
         {
             _window.ShowCursor(true);
+            initialCapture = true;
         }
     }
 
@@ -50,20 +60,21 @@ public class CameraController
         if (_input.IsKeyDown(Key.ShiftLeft)) _camera.Position -= up * _speed * dt;
     }
 
+    private (int X, int Y) currentMouse = (0, 0);
     private void HandleMouse()
     {
-        var (mouseX, mouseY) = _window.GetMousePosition;
+        currentMouse = _window.GetMousePosition;
         int centerX = _window.Width / 2;
         int centerY = _window.Height / 2;
 
-        int dx = mouseX - centerX;
-        int dy = mouseY - centerY;
+        int dx = currentMouse.X - centerX;
+        int dy = currentMouse.Y - centerY;
 
         if (dx != 0 || dy != 0)
         {
             var yaw = Quaternion.CreateFromAxisAngle(Vector3.UnitY, dx * -_mouseSensitivity);
             var pitch = Quaternion.CreateFromAxisAngle(_camera.GetRight(), dy * -_mouseSensitivity);
-            _camera.Orientation = Quaternion.Normalize(pitch * yaw * _camera.Orientation);
+            _camera.Orientation = Quaternion.Normalize(yaw * pitch * _camera.Orientation);
 
             // reset cursor back to center
             _window.SetMousePosition(centerX, centerY);

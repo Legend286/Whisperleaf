@@ -11,9 +11,12 @@
         <None Include="Graphics\Shaders\**\*.vert" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="Graphics\Shaders\**\*.frag" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="Graphics\Shaders\**\*.comp" CopyToOutputDirectory="PreserveNewest"/>
+        <None Include="Resources\**\*.*" CopyToOutputDirectory="PreserveNewest"/>
     </ItemGroup>
 
     <ItemGroup>
+      <PackageReference Include="assimp_native" Version="4.0.1" />
+      <PackageReference Include="StirlingLabs.Assimp.Net" Version="23.4.1" />
       <PackageReference Include="Veldrid" Version="4.9.0" />
       <PackageReference Include="Veldrid.ImageSharp" Version="4.9.0" />
       <PackageReference Include="Veldrid.MetalBindings" Version="4.9.0" />
@@ -21,10 +24,6 @@
       <PackageReference Include="Veldrid.SDL2" Version="4.9.0" />
       <PackageReference Include="Veldrid.SPIRV" Version="1.0.15" />
       <PackageReference Include="Veldrid.StartupUtilities" Version="4.9.0" />
-    </ItemGroup>
-
-    <ItemGroup>
-      <Folder Include="Graphics\Camera\" />
     </ItemGroup>
 
 </Project>

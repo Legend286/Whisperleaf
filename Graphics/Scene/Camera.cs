@@ -10,7 +10,7 @@ public class Camera
     public float Fov { get; set; } = 90.0f;
     public float AspectRatio { get; set; }
     public float Near { get; set; } = 0.1f;
-    public float Far { get; set; } = 100.0f;
+    public float Far { get; set; } = 10000.0f;
 
     public Camera(float aspectRatio)
     {

@@ -17,6 +17,7 @@ class Program
         var renderer = new Renderer(window);
         
         renderer.AddPass(new MeshPass(window.graphicsDevice, camera));
+        renderer.AddPass(new GltfPass(window.graphicsDevice, camera, "Resources/Models/sponza-palace/source/scene.glb"));
         renderer.SetCamera(camera);
         renderer.Run();
     }
