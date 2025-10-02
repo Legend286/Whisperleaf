@@ -60,5 +60,5 @@ public class Window
     public void SetMousePosition(int x, int y) => sdlWindow.SetMousePosition(x, y);
     public void ShowCursor(bool visible) => sdlWindow.CursorVisible = visible;
     
-    public void SetWindowTitle(string title) => sdlWindow.Title = $"{title} ({Backend}) (FPS: {Time.FPS:00} Frametime: {1/Time.DeltaTime:00} ms.";
+    public void SetWindowTitle(string title) => sdlWindow.Title = $"{title} ({Backend}) (FPS: {Time.FPS} Frametime: {1/Time.DeltaTime:00} ms.";
 }

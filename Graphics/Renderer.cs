@@ -1,4 +1,5 @@
 using Veldrid;
+using Whisperleaf.Graphics.Data;
 using Whisperleaf.Graphics.RenderPasses;
 using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Input;
@@ -19,6 +20,7 @@ public class Renderer
         _window = window;
         _cl = _window.graphicsDevice.ResourceFactory.CreateCommandList();
         _inputManager = new InputManager();
+        PbrLayout.Initialize(_window.graphicsDevice);
     }
 
     public void AddPass(IRenderPass pass) => _passes.Add(pass);
@@ -34,15 +36,15 @@ public class Renderer
         while (_window.Exists)
         {
             Time.Update();
+        
             _inputManager.Update(_window);
             _cameraController.Update(Time.DeltaTime);
             _window.PumpEvents();
-
             foreach (var pass in _passes)
             {
                 pass.Render(_window.graphicsDevice, _cl, _camera);
             }
-            _window.graphicsDevice.WaitForIdle();
+
             _window.graphicsDevice.SwapBuffers(_window.graphicsDevice.MainSwapchain);
         }
     }

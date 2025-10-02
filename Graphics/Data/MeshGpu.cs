@@ -1,28 +1,37 @@
-// Whisperleaf/Graphics/Assets/MeshGpu.cs
+using System.Numerics;
+using System.Runtime.InteropServices;
 using Veldrid;
 using Whisperleaf.AssetPipeline;
 
 namespace Whisperleaf.Graphics.Assets
 {
-    public sealed class MeshGpu : IDisposable
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ModelPush
+    {
+        public Matrix4x4 Model;
+    }
+
+    public class MeshGpu : IDisposable
     {
         public DeviceBuffer VertexBuffer { get; }
         public DeviceBuffer IndexBuffer { get; }
-        public uint IndexCount { get; }
+        public int IndexCount { get; }
+        public Matrix4x4 WorldMatrix { get; }
 
-        public MeshGpu(GraphicsDevice gd, MeshData data)
+        public MeshGpu(GraphicsDevice gd, MeshData mesh)
         {
-            var rf = gd.ResourceFactory;
+            var factory = gd.ResourceFactory;
 
-            VertexBuffer = rf.CreateBuffer(new BufferDescription(
-                (uint)(data.Vertices.Length * sizeof(float)), BufferUsage.VertexBuffer));
-            gd.UpdateBuffer(VertexBuffer, 0, data.Vertices);
+            VertexBuffer = factory.CreateBuffer(new BufferDescription(
+                (uint)(mesh.Vertices.Length * sizeof(float)), BufferUsage.VertexBuffer));
+            gd.UpdateBuffer(VertexBuffer, 0, mesh.Vertices);
 
-            IndexBuffer = rf.CreateBuffer(new BufferDescription(
-                (uint)(data.Indices.Length * sizeof(uint)), BufferUsage.IndexBuffer));
-            gd.UpdateBuffer(IndexBuffer, 0, data.Indices);
+            IndexBuffer = factory.CreateBuffer(new BufferDescription(
+                (uint)(mesh.Indices.Length * sizeof(uint)), BufferUsage.IndexBuffer));
+            gd.UpdateBuffer(IndexBuffer, 0, mesh.Indices);
 
-            IndexCount = (uint)data.Indices.Length;
+            IndexCount = mesh.Indices.Length;
+            WorldMatrix = mesh.WorldMatrix; // save Assimp world matrix
         }
 
         public void Dispose()

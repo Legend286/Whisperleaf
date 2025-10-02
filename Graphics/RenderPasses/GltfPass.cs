@@ -1,84 +1,94 @@
-using System.Numerics;
 using Veldrid;
+using Whisperleaf.AssetPipeline;
 using Whisperleaf.Graphics.Assets;
+using Whisperleaf.Graphics.Data;
 using Whisperleaf.Graphics.Loaders;
 using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Graphics.Scene.Data;
 
 namespace Whisperleaf.Graphics.RenderPasses
 {
-    public class GltfPass : IRenderPass, IDisposable
+    public class GltfPass : IRenderPass
     {
-        private readonly List<MeshGpu> _meshes = new();
-        private readonly CameraUniformBuffer _cameraBuffer;
         private readonly Pipeline _pipeline;
+        private readonly CameraUniformBuffer _cameraBuffer;
+
+        private readonly List<MeshGpu> _meshes = new();
+        private readonly List<MaterialData> _materials = new();
 
         public GltfPass(GraphicsDevice gd, Camera camera, string modelPath)
         {
             var factory = gd.ResourceFactory;
 
-            // Load model with Assimp loader
-            var (cpuMeshes, cpuMaterials) = AssimpLoader.LoadCPU(modelPath, decodeImages: false);
+            // Load from AssimpLoader (CPU)
+            var (cpuMeshes, cpuMats, scene) = AssimpLoader.LoadCPU(modelPath);
 
-            // Upload all meshes to GPU
+            // Upload meshes to GPU
             foreach (var mesh in cpuMeshes)
                 _meshes.Add(new MeshGpu(gd, mesh));
+            
+            foreach (var mat in cpuMats)
+            {
+                MaterialUploader.Upload(gd, PbrLayout.MaterialLayout, mat, scene);
+                _materials.Add(mat);
+            }
 
-            // Camera uniform
+
             _cameraBuffer = new CameraUniformBuffer(gd);
 
-            // Vertex layout: must match loader output
+            // Pipeline
             var vertexLayout = new VertexLayoutDescription(
                 new VertexElementDescription("v_Position", VertexElementSemantic.Position, VertexElementFormat.Float3),
                 new VertexElementDescription("v_Normal", VertexElementSemantic.Normal, VertexElementFormat.Float3),
-                new VertexElementDescription("v_TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2),
-                new VertexElementDescription("v_Tangent", VertexElementSemantic.Normal, VertexElementFormat.Float4)
+                new VertexElementDescription("v_Tangent", VertexElementSemantic.Normal, VertexElementFormat.Float4),
+                new VertexElementDescription("v_TexCoord", VertexElementSemantic.TextureCoordinate,
+                    VertexElementFormat.Float2)
             );
 
-            // Create pipeline (basic flat shader for now)
             _pipeline = PipelineFactory.CreatePipeline(
                 gd,
-                "Graphics/Shaders/Gltf.vert",
-                "Graphics/Shaders/Gltf.frag",
+                "Graphics/Shaders/PBR.vert",
+                "Graphics/Shaders/PBR.frag",
                 vertexLayout,
                 gd.MainSwapchain.Framebuffer,
                 enableDepth: true,
                 enableBlend: false,
-                extraLayouts: new[] { _cameraBuffer.Layout }
+                extraLayouts: new[] { _cameraBuffer.Layout, PbrLayout.MaterialLayout }
             );
         }
 
         public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null)
         {
-            if (camera == null || _meshes.Count == 0)
-                return;
+            if (camera == null) return;
 
             _cameraBuffer.Update(gd, camera);
 
             cl.Begin();
             cl.SetFramebuffer(gd.MainSwapchain.Framebuffer);
-            cl.ClearColorTarget(0, RgbaFloat.CornflowerBlue);
-            cl.ClearDepthStencil(1.0f);
+            cl.ClearColorTarget(0, RgbaFloat.Black);
+            cl.ClearDepthStencil(1f);
 
             cl.SetPipeline(_pipeline);
             cl.SetGraphicsResourceSet(0, _cameraBuffer.ResourceSet);
 
-            foreach (var mesh in _meshes)
+            for (int i = 0; i < _meshes.Count; i++)
             {
+                var mesh = _meshes[i];
+                var mat = _materials[Math.Min(i, _materials.Count - 1)];
+
                 cl.SetVertexBuffer(0, mesh.VertexBuffer);
                 cl.SetIndexBuffer(mesh.IndexBuffer, IndexFormat.UInt32);
-                cl.DrawIndexed(mesh.IndexCount, 1, 0, 0, 0);
+
+                // Bind material
+                if (mat.ResourceSet != null)
+                    cl.SetGraphicsResourceSet(1, mat.ResourceSet);
+                
+                cl.DrawIndexed((uint)mesh.IndexCount, 1, 0, 0, 0);
             }
+
 
             cl.End();
             gd.SubmitCommands(cl);
-        }
-
-        public void Dispose()
-        {
-            foreach (var m in _meshes) m.Dispose();
-            _pipeline.Dispose();
-            _cameraBuffer.Dispose();
         }
     }
 }

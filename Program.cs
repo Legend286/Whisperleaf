@@ -16,8 +16,7 @@ class Program
         var camera = new Camera(window.AspectRatio);
         var renderer = new Renderer(window);
         
-        renderer.AddPass(new MeshPass(window.graphicsDevice, camera));
-        renderer.AddPass(new GltfPass(window.graphicsDevice, camera, "Resources/Models/sponza-palace/source/scene.glb"));
+        renderer.AddPass(new GltfPass(window.graphicsDevice, camera, "Resources/Models/Bistro_Godot.glb"));
         renderer.SetCamera(camera);
         renderer.Run();
     }
