@@ -20,6 +20,7 @@ public class CameraController
         _input = input;
         _window = window;
     }
+    private bool skipNextDelta = false;
 
     private bool initialCapture = true;
     public void Update(float deltaTime)
@@ -34,6 +35,7 @@ public class CameraController
             {
                 _window.SetMousePosition(centerX, centerY);
                 initialCapture = false;
+                skipNextDelta = true;
             }
 
             HandleMovement(deltaTime);
@@ -63,6 +65,15 @@ public class CameraController
     private (int X, int Y) currentMouse = (0, 0);
     private void HandleMouse()
     {
+        var mouseDelta = _input.MouseDelta;
+
+        if (skipNextDelta)
+        { 
+            // swallow the warp delta
+            skipNextDelta = false;
+            return;
+        }
+        
         currentMouse = _window.GetMousePosition;
         int centerX = _window.Width / 2;
         int centerY = _window.Height / 2;

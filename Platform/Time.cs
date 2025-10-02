@@ -10,6 +10,8 @@ public static class Time
 
     public static float DeltaTime { get; private set; }
     public static float TotalTime { get; private set; }
+    
+    public static int FPS { get; private set; }
 
     static Time()
     {
@@ -23,5 +25,6 @@ public static class Time
         DeltaTime = (float)(currentTime - _lastTime);
         TotalTime = (float)currentTime;
         _lastTime = currentTime;
+        FPS = (int)DeltaTime * 1000;
     }
 }

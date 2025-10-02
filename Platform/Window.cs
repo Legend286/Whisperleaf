@@ -15,6 +15,8 @@ public class Window
 
     public float AspectRatio => (float)Width / Height;
 
+    private GraphicsBackend Backend;
+
     public Window(int width, int height, string title)
     {
         GraphicsDeviceOptions gdopt = new GraphicsDeviceOptions
@@ -29,14 +31,14 @@ public class Window
             SyncToVerticalBlank = true,
         };
 
-        GraphicsBackend preferredBackend = GraphicsBackend.OpenGL;
+        Backend = GraphicsBackend.OpenGL;
         if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
         {
-            preferredBackend = GraphicsBackend.Vulkan;
+            Backend = GraphicsBackend.Vulkan;
         }
         else if (OperatingSystem.IsMacOS())
         {
-            preferredBackend = GraphicsBackend.Metal;
+            Backend = GraphicsBackend.Metal;
         }
 
         var wci = new WindowCreateInfo
@@ -45,10 +47,10 @@ public class Window
             Y = 100,
             WindowWidth = width,
             WindowHeight = height,
-            WindowTitle = $"{title} ({preferredBackend})"
+            WindowTitle = $"{title} ({Backend})"
         };
 
-        VeldridStartup.CreateWindowAndGraphicsDevice(wci, gdopt, preferredBackend, out sdlWindow, out graphicsDevice);
+        VeldridStartup.CreateWindowAndGraphicsDevice(wci, gdopt, Backend, out sdlWindow, out graphicsDevice);
     }
 
     public bool Exists => sdlWindow.Exists;
@@ -57,4 +59,6 @@ public class Window
     public (int X, int Y) GetMousePosition => ((int)PumpEvents().MousePosition.X,  (int)PumpEvents().MousePosition.Y);
     public void SetMousePosition(int x, int y) => sdlWindow.SetMousePosition(x, y);
     public void ShowCursor(bool visible) => sdlWindow.CursorVisible = visible;
+    
+    public void SetWindowTitle(string title) => sdlWindow.Title = $"{title} ({Backend}) (FPS: {Time.FPS:00} Frametime: {1/Time.DeltaTime:00} ms.";
 }
