@@ -6,6 +6,7 @@ layout(location = 1) in vec3 v_Normal;
 layout(location = 2) in vec4 v_Tangent;
 layout(location = 3) in vec2 v_TexCoord;
 
+
 // Camera buffer
 layout(set = 0, binding = 0) uniform CameraBuffer {
     mat4 u_View;
@@ -36,7 +37,7 @@ void main()
     vec3 B = cross(N, T) * v_Tangent.w; // reconstruct bitangent with sign
     f_TBN = mat3(T, B, N);
 
-    f_UV = v_TexCoord;
+    f_UV = v_TexCoord * vec2(1,-1);
 
     // Clip space
     gl_Position = u_ViewProj * worldPos;

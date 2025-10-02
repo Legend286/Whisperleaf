@@ -81,21 +81,21 @@ void main()
         // Packed RMA in MetallicTex: R=AO, G=R, B=M
         vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
         ao        = rma.r;
-        roughness = clamp(rma.g * u_RoughnessFactor, 0.04, 1.0);
-        metallic  = clamp(rma.b * u_MetallicFactor,  0.0,  1.0);
+        roughness = clamp(rma.g, 0.04, 1.0);
+        metallic  = clamp(rma.b,  0.0,  1.0);
     }
     else
     {
         float m = texture(sampler2D(MetallicTex,  MainSampler), f_UV).r;
         float r = texture(sampler2D(RoughnessTex, MainSampler), f_UV).g;
         float a = texture(sampler2D(OcclusionTex, MainSampler), f_UV).r;
-        metallic  = clamp(m * u_MetallicFactor,  0.0, 1.0);
-        roughness = clamp(r * u_RoughnessFactor, 0.04, 1.0);
+        metallic  = clamp(m,  0.0, 1.0);
+        roughness = clamp(r, 0.04, 1.0);
         ao        = a;
     }
 
-    vec4 baseColor = baseTex * u_BaseColorFactor;
-    vec3 emissive  = emissiveT * u_EmissiveFactor;
+    vec4 baseColor = baseTex;
+    vec3 emissive  = emissiveT;
 
     // Normal mapping (tangent → world)
     vec3 N_ts = normalize(normalTex * 2.0 - 1.0);
@@ -126,11 +126,7 @@ void main()
     // Ambient (simple AO term; replace with IBL later)
     vec3 ambient = baseColor.rgb * ao * 0.03;
 
-    vec3 color = ambient + Lo + emissive;
+    vec3 color = ambient + Lo ;// emissive;
 
-    // ACES-ish tone map + gamma
-    color = color / (color + vec3(1.0));
-    color = pow(color, vec3(1.0 / 2.2));
-
-    out_Color = vec4(f_TBN * vec3(0,0,1),1.0f);
+    out_Color = vec4(color , baseColor.a);
 }

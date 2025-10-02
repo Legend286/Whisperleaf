@@ -17,6 +17,7 @@ namespace Whisperleaf.Graphics.Assets
         public DeviceBuffer IndexBuffer { get; }
         public int IndexCount { get; }
         public Matrix4x4 WorldMatrix { get; }
+        public int MaterialIndex { get; }
 
         public MeshGpu(GraphicsDevice gd, MeshData mesh)
         {
@@ -32,6 +33,7 @@ namespace Whisperleaf.Graphics.Assets
 
             IndexCount = mesh.Indices.Length;
             WorldMatrix = mesh.WorldMatrix; // save Assimp world matrix
+            MaterialIndex = mesh.MaterialIndex;
         }
 
         public void Dispose()

@@ -1,5 +1,6 @@
 // Whisperleaf/Graphics/Loaders/AssimpLoader.cs
 using Assimp;
+using System.IO;
 using System.Numerics;
 using Assimp.Unmanaged;
 using Whisperleaf.AssetPipeline;
@@ -17,14 +18,15 @@ namespace Whisperleaf.Graphics.Loaders
             PostProcessSteps.GenerateSmoothNormals |
             PostProcessSteps.CalculateTangentSpace |
             PostProcessSteps.JoinIdenticalVertices |
-            PostProcessSteps.ImproveCacheLocality |
-            PostProcessSteps.FlipUVs; // remove FlipUVs if you don't need it
+            PostProcessSteps.ImproveCacheLocality;
 
         public static (List<MeshData> meshes, List<MaterialData> materials, Assimp.Scene scene) LoadCPU(string path)
         {
             using var ctx = new AssimpContext();
             var scene = ctx.ImportFile(path, DefaultSteps)
                         ?? throw new Exception($"Assimp failed to load: {path}");
+
+            var modelDir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? Directory.GetCurrentDirectory();
 
             // ----- Materials
             var materials = new List<MaterialData>(scene.MaterialCount);
@@ -51,14 +53,14 @@ namespace Whisperleaf.Graphics.Loaders
                         aim.ColorEmissive.B);
 
                 // Texture paths (Assimp distinguishes by TextureType, we normalize)
-                m.BaseColorPath = ResolveTexture(scene, aim, TextureType.BaseColor) ??
-                                  ResolveTexture(scene, aim, TextureType.Diffuse);
-                m.NormalPath = ResolveTexture(scene, aim, TextureType.NormalCamera) ??
-                               ResolveTexture(scene, aim, TextureType.Normals);
-                m.EmissivePath = ResolveTexture(scene, aim, TextureType.Emissive);
+                m.BaseColorPath = ResolveTexture(scene, aim, TextureType.BaseColor, modelDir) ??
+                                  ResolveTexture(scene, aim, TextureType.Diffuse, modelDir);
+                m.NormalPath = ResolveTexture(scene, aim, TextureType.NormalCamera, modelDir) ??
+                               ResolveTexture(scene, aim, TextureType.Normals, modelDir);
+                m.EmissivePath = ResolveTexture(scene, aim, TextureType.Emissive, modelDir);
 
                 // Some exporters put roughness/metallic/ao into one texture
-                var rma = ResolveTexture(scene, aim, TextureType.Unknown); // Assimp might not expose directly
+                var rma = ResolveTexture(scene, aim, TextureType.Unknown, modelDir); // Assimp might not expose directly
                 if (rma != null)
                 {
                     m.OcclusionPath = rma;
@@ -68,10 +70,10 @@ namespace Whisperleaf.Graphics.Loaders
                 else
                 {
                     // fallback to individual maps
-                    m.OcclusionPath = ResolveTexture(scene, aim, TextureType.AmbientOcclusion) ??
-                                      ResolveTexture(scene, aim, TextureType.Ambient);
-                    m.RoughnessPath = ResolveTexture(scene, aim, TextureType.Roughness);
-                    m.MetallicPath  = ResolveTexture(scene, aim, TextureType.Metalness);
+                    m.OcclusionPath = ResolveTexture(scene, aim, TextureType.AmbientOcclusion, modelDir) ??
+                                      ResolveTexture(scene, aim, TextureType.Ambient, modelDir);
+                    m.RoughnessPath = ResolveTexture(scene, aim, TextureType.Roughness, modelDir);
+                    m.MetallicPath  = ResolveTexture(scene, aim, TextureType.Metalness, modelDir);
                 }
 
                 materials.Add(m);
@@ -177,12 +179,12 @@ namespace Whisperleaf.Graphics.Loaders
                 interleaved[w++] = N.X;
                 interleaved[w++] = N.Y;
                 interleaved[w++] = N.Z;
-                interleaved[w++] = UV.X;
-                interleaved[w++] = UV.Y;
                 interleaved[w++] = T4.X;
                 interleaved[w++] = T4.Y;
                 interleaved[w++] = T4.Z;
                 interleaved[w++] = T4.W;
+                interleaved[w++] = UV.X;
+                interleaved[w++] = UV.Y;
             }
 
             return new MeshData
@@ -192,28 +194,36 @@ namespace Whisperleaf.Graphics.Loaders
                 Indices = indices,
                 AABBMin = aabbMin,
                 AABBMax = aabbMax,
-                WorldMatrix = System.Numerics.Matrix4x4.Identity // default, filled by TraverseNode
+                WorldMatrix = System.Numerics.Matrix4x4.Identity, // default, filled by TraverseNode
+                MaterialIndex = am.MaterialIndex
             };
         }
 
         // Resolves either external or embedded GLB textures
-        private static string? ResolveTexture(Assimp.Scene scene, Material m, TextureType type)
+        private static string? ResolveTexture(Assimp.Scene scene, Material m, TextureType type, string modelDir)
         {
             if (m.GetMaterialTextureCount(type) > 0 &&
                 m.GetMaterialTexture(type, 0, out TextureSlot slot))
             {
-                if (!string.IsNullOrEmpty(slot.FilePath) && slot.FilePath.StartsWith("*"))
+                if (!string.IsNullOrEmpty(slot.FilePath))
                 {
-                    // Embedded texture
-                    int idx = int.Parse(slot.FilePath.Substring(1));
-                    if (scene.HasTextures && idx < scene.Textures.Count)
+                    if (slot.FilePath.StartsWith("*"))
+                        return slot.FilePath; // Embedded texture marker understood by MaterialUploader
+
+                    var texturePath = slot.FilePath;
+                    try
                     {
-                        var tex = scene.Textures[idx];
-                        // Store a synthetic name (e.g. "__EMBEDDED_0.png")
-                        return $"__EMBEDDED_{idx}";
+                        texturePath = texturePath.Replace('\\', Path.DirectorySeparatorChar);
+                        if (!Path.IsPathRooted(texturePath))
+                            texturePath = Path.GetFullPath(Path.Combine(modelDir, texturePath));
                     }
+                    catch
+                    {
+                        // If normalization fails, fall back to raw path; loader will attempt dummy texture
+                    }
+
+                    return texturePath;
                 }
-                return slot.FilePath;
             }
             return null;
         }

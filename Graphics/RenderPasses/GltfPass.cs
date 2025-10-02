@@ -1,3 +1,4 @@
+using System;
 using Veldrid;
 using Whisperleaf.AssetPipeline;
 using Whisperleaf.Graphics.Assets;
@@ -74,7 +75,14 @@ namespace Whisperleaf.Graphics.RenderPasses
             for (int i = 0; i < _meshes.Count; i++)
             {
                 var mesh = _meshes[i];
-                var mat = _materials[Math.Min(i, _materials.Count - 1)];
+                if (_materials.Count == 0)
+                    continue;
+
+                int matIndex = mesh.MaterialIndex;
+                if (matIndex < 0 || matIndex >= _materials.Count)
+                    matIndex = Math.Min(i, _materials.Count - 1);
+
+                var mat = _materials[matIndex];
 
                 cl.SetVertexBuffer(0, mesh.VertexBuffer);
                 cl.SetIndexBuffer(mesh.IndexBuffer, IndexFormat.UInt32);
