@@ -8,10 +8,10 @@
     </PropertyGroup>
     
     <ItemGroup>
-        <None Include="Graphics\Shaders\**\*.vert" CopyToOutputDirectory="PreserveNewest"/>
-        <None Include="Graphics\Shaders\**\*.frag" CopyToOutputDirectory="PreserveNewest"/>
-        <None Include="Graphics\Shaders\**\*.comp" CopyToOutputDirectory="PreserveNewest"/>
-        <None Include="Resources\**\*.*" CopyToOutputDirectory="PreserveNewest"/>
+        <None Include="Graphics\Shaders\**\*.vert" CopyToOutputDirectory="Always"/>
+        <None Include="Graphics\Shaders\**\*.frag" CopyToOutputDirectory="Always"/>
+        <None Include="Graphics\Shaders\**\*.comp" CopyToOutputDirectory="Always"/>
+        <None Include="Resources\**\*.*" CopyToOutputDirectory="Always"/>
     </ItemGroup>
 
     <ItemGroup>

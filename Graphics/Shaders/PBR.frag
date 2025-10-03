@@ -13,6 +13,7 @@ layout(set = 0, binding = 0) uniform CameraBuffer {
     mat4 u_Proj;
     mat4 u_ViewProj;
     vec3 u_CameraPos;
+    float padding0;
 };
 
 // Material resources: one sampler, multiple textures
@@ -36,35 +37,62 @@ layout(set = 1, binding = 7) uniform MaterialParams {
 // -------------------- PBR helpers --------------------
 const float PI = 3.14159265359;
 
-vec3 fresnelSchlick(float cosTheta, vec3 F0)
+vec3 getCameraPos(mat4 view)
 {
-    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+    // Invert the view matrix
+    mat4 invView = inverse(view);
+    return invView[3].xyz; // translation column
 }
 
-float distributionGGX(vec3 N, vec3 H, float roughness)
-{
-    float a  = roughness * roughness;
+// GGX Normal Distribution Function (NDF)
+float D_GGX(float NdotH, float roughness) {
+    float a = roughness * roughness;
     float a2 = a * a;
-    float NdotH  = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    float denom = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
     return a2 / (PI * denom * denom);
 }
 
-float geometrySchlickGGX(float NdotV, float roughness)
-{
-    float r = roughness + 1.0;
-    float k = (r * r) * 0.125; // (r^2)/8
-    return NdotV / (NdotV * (1.0 - k) + k);
+// Geometry function (Smith GGX)
+float G_Smith(float NdotV, float NdotL, float roughness) {
+    float r = (roughness + 1.0);
+    float k = (r * r) / 8.0;
+
+    float G_V = NdotV / (NdotV * (1.0 - k) + k);
+    float G_L = NdotL / (NdotL * (1.0 - k) + k);
+
+    return G_V * G_L;
 }
 
-float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
+// Fresnel (Schlick's approximation)
+vec3 F_Schlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+// Main PBR lighting function
+vec3 PBR(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness, vec3 F0, vec3 lightColor, float lightIntensity) {
+    
+    vec3 H = normalize(V + L);
+    
+    vec3 baseF0 = vec3(0.04); 
+    F0 = mix(baseF0, albedo, metallic); 
+    
     float NdotL = max(dot(N, L), 0.0);
-    float ggx1 = geometrySchlickGGX(NdotV, roughness);
-    float ggx2 = geometrySchlickGGX(NdotL, roughness);
-    return ggx1 * ggx2;
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotH = max(dot(N, H), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+
+    float D = D_GGX(NdotH, roughness); 
+    float G = G_Smith(NdotV, NdotL, roughness);
+    vec3 F = F_Schlick(HdotV, F0);
+    
+    vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
+    
+    vec3 kD = (1.0 - F) * (1.0 - metallic);
+    vec3 diffuse = (kD * albedo) / PI;
+    
+    vec3 lighting = (diffuse + specular) * lightColor * lightIntensity * NdotL;
+
+    return lighting;
 }
 
 // -------------------- Main --------------------
@@ -98,35 +126,17 @@ void main()
     vec3 emissive  = emissiveT;
 
     // Normal mapping (tangent → world)
-    vec3 N_ts = normalize(normalTex * 2.0 - 1.0);
+    vec3 N_ts = normalize(normalTex * 2 - 1);
     vec3 N = normalize(f_TBN * N_ts);
 
     // Lighting
     vec3 V = normalize(u_CameraPos - f_WorldPos);
-    vec3 L = normalize(vec3(0.5, 1.0, 0.3));
+    vec3 L = normalize(vec3(1,8,-2) - f_WorldPos);
     vec3 H = normalize(V + L);
     vec3 lightColor = vec3(1.0);
+    
+    vec3 final = PBR(N, V, L, baseTex.rgb, metallic, 0.2, vec3(0.04), lightColor, 1.0f);
 
-    // Cook–Torrance GGX
-    float NDF = distributionGGX(N, H, roughness);
-    float G   = geometrySmith(N, V, L, roughness);
-    vec3  F0  = mix(vec3(0.04), baseColor.rgb, metallic);
-    vec3  F   = fresnelSchlick(max(dot(H, V), 0.0), F0);
-
-    vec3 specNumerator   = NDF * G * F;
-    float denom          = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.001;
-    vec3 specular        = specNumerator / denom;
-
-    vec3 kS = F;
-    vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
-
-    float NdotL = max(dot(N, L), 0.0);
-    vec3 Lo = (kD * baseColor.rgb / PI + specular) * lightColor * NdotL;
-
-    // Ambient (simple AO term; replace with IBL later)
-    vec3 ambient = baseColor.rgb * ao * 0.03;
-
-    vec3 color = ambient + Lo ;// emissive;
-
-    out_Color = vec4(color , baseColor.a);
+    
+    out_Color = vec4(final, baseColor.a);
 }

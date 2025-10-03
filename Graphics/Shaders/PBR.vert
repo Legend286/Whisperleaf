@@ -36,9 +36,9 @@ void main()
     vec3 N = normalize(f_Normal);
     vec3 B = cross(N, T) * v_Tangent.w; // reconstruct bitangent with sign
     f_TBN = mat3(T, B, N);
-
+   
     f_UV = v_TexCoord * vec2(1,-1);
 
     // Clip space
-    gl_Position = u_ViewProj * worldPos;
+    gl_Position = u_Proj * u_View * worldPos;
 }

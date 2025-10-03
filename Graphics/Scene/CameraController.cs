@@ -11,7 +11,7 @@ public class CameraController
     private readonly InputManager _input;
     private readonly Window _window;
 
-    private float _speed = 80.0f;
+    private float _speed = 20.0f;
     private float _mouseSensitivity = 0.0025f;
 
     public CameraController(Camera camera, InputManager input, Window window)
