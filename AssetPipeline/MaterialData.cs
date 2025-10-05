@@ -38,6 +38,7 @@ namespace Whisperleaf.AssetPipeline
 
         public DeviceBuffer? ParamsBuffer;
         public ResourceSet? ResourceSet;
+        public ResourceSet? ParamsResourceSet;
 
         // Flag to detect packed RMA textures
         public bool UsePackedRMA;
@@ -58,6 +59,7 @@ namespace Whisperleaf.AssetPipeline
             EmissiveView?.Dispose();
             ParamsBuffer?.Dispose();
             ResourceSet?.Dispose();
+            ParamsResourceSet?.Dispose();
         }
     }
 }

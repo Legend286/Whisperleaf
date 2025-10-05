@@ -39,6 +39,7 @@ public class PipelineFactory
                 vertexLayouts: new VertexLayoutDescription[] { vertexLayout },
                 shaders: shaders),
             Outputs = target.OutputDescription,
+            ResourceBindingModel = ResourceBindingModel.Improved
         };
 
         return factory.CreateGraphicsPipeline(pd);

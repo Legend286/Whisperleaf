@@ -1,6 +1,7 @@
 using Veldrid;
 using Veldrid.Sdl2;
 using Veldrid.StartupUtilities;
+using Whisperleaf.Input;
 
 namespace Whisperleaf.Platform;
 
@@ -9,6 +10,7 @@ public class Window
     private Sdl2Window sdlWindow;
 
     public GraphicsDevice graphicsDevice;
+    public Sdl2Window SdlWindow => sdlWindow;
 
     public int Width => sdlWindow.Width;
     public int Height => sdlWindow.Height;
@@ -21,7 +23,7 @@ public class Window
     {
         GraphicsDeviceOptions gdopt = new GraphicsDeviceOptions
         {
-            Debug = false,
+            Debug = true,
             HasMainSwapchain = true,
             PreferDepthRangeZeroToOne = true,
             PreferStandardClipSpaceYDirection = true,
@@ -36,7 +38,8 @@ public class Window
         {
             Backend = GraphicsBackend.Vulkan;
         }
-        else if (OperatingSystem.IsMacOS())
+
+        if (OperatingSystem.IsMacOS())
         {
             Backend = GraphicsBackend.Metal;
         }
@@ -51,14 +54,23 @@ public class Window
         };
 
         VeldridStartup.CreateWindowAndGraphicsDevice(wci, gdopt, Backend, out sdlWindow, out graphicsDevice);
+        sdlWindow.Resized += OnWindowResized;
+    }
+
+    public event Action<int, int>? WindowResized;
+
+    private void OnWindowResized()
+    {
+        graphicsDevice.MainSwapchain.Resize((uint)sdlWindow.Width, (uint)sdlWindow.Height);
+        WindowResized?.Invoke(sdlWindow.Width, sdlWindow.Height);
     }
 
     public bool Exists => sdlWindow.Exists;
     public InputSnapshot PumpEvents() => sdlWindow.PumpEvents();
     
-    public (int X, int Y) GetMousePosition => ((int)PumpEvents().MousePosition.X,  (int)PumpEvents().MousePosition.Y);
+    public (int X, int Y) GetMousePosition => ((int)InputManager.MousePosition.X, (int)InputManager.MousePosition.Y);
     public void SetMousePosition(int x, int y) => sdlWindow.SetMousePosition(x, y);
     public void ShowCursor(bool visible) => sdlWindow.CursorVisible = visible;
     
-    public void SetWindowTitle(string title) => sdlWindow.Title = $"{title} ({Backend}) (FPS: {Time.FPS} Frametime: {1000/Time.FPS:00} ms.";
+    public void SetWindowTitle(string title) => sdlWindow.Title = $"{title} ({Backend}) (FPS: {Time.FPS} Frametime: {Time.Milliseconds:00} ms.";
 }

@@ -7,7 +7,7 @@ using Whisperleaf.Graphics.Data;
 namespace Whisperleaf.AssetPipeline;
 public static class MaterialUploader
 {
-    public static void Upload(GraphicsDevice gd, ResourceLayout layout, MaterialData mat, Assimp.Scene? scene = null)
+    public static void Upload(GraphicsDevice gd, ResourceLayout layout, ResourceLayout paramsLayout, MaterialData mat, Assimp.Scene? scene = null)
     {
         var factory = gd.ResourceFactory;
 
@@ -15,12 +15,36 @@ public static class MaterialUploader
             LoadOrDummy(gd, mat.BaseColorPath, srgb: true, new RgbaByte(255,255,255,255), scene);
         (mat.NormalTex, mat.NormalView) =
             LoadOrDummy(gd, mat.NormalPath, srgb: false, new RgbaByte(128,128,255,255), scene);
-        (mat.MetallicTex, mat.MetallicView) =
-            LoadOrDummy(gd, mat.MetallicPath, srgb: false, new RgbaByte((byte)(mat.MetallicFactor*255),0,0,255), scene);
-        (mat.RoughnessTex, mat.RoughnessView) =
-            LoadOrDummy(gd, mat.RoughnessPath, srgb: false, new RgbaByte((byte)(mat.RoughnessFactor*255),0,0,255), scene);
-        (mat.OcclusionTex, mat.OcclusionView) =
-            LoadOrDummy(gd, mat.OcclusionPath, srgb: false, new RgbaByte(255,255,255,255), scene);
+
+        if (mat.UsePackedRMA)
+        {
+            // Load the packed RMA texture once and reuse for all three slots
+            // glTF standard: R=AO (default 255), G=Roughness, B=Metallic
+            Console.WriteLine($"  Loading RMA from: {mat.MetallicPath}");
+            (mat.MetallicTex, mat.MetallicView) =
+                LoadOrDummy(gd, mat.MetallicPath, srgb: false, new RgbaByte(255, (byte)(mat.RoughnessFactor*255), (byte)(mat.MetallicFactor*255), 255), scene);
+
+            Console.WriteLine($"  RMA texture loaded: {mat.MetallicTex.Width}x{mat.MetallicTex.Height}");
+
+            // Create separate views of the same texture for each slot
+            // (Some graphics APIs don't like binding the same view to multiple slots)
+            mat.RoughnessTex = mat.MetallicTex;
+            mat.RoughnessView = factory.CreateTextureView(mat.MetallicTex);
+            mat.OcclusionTex = mat.MetallicTex;
+            mat.OcclusionView = factory.CreateTextureView(mat.MetallicTex);
+
+            Console.WriteLine($"  DEBUG: After RMA packing - created 3 separate views of same texture");
+        }
+        else
+        {
+            // Load separate textures
+            (mat.MetallicTex, mat.MetallicView) =
+                LoadOrDummy(gd, mat.MetallicPath, srgb: false, new RgbaByte(0,0,(byte)(mat.MetallicFactor*255),255), scene);
+            (mat.RoughnessTex, mat.RoughnessView) =
+                LoadOrDummy(gd, mat.RoughnessPath, srgb: false, new RgbaByte(0,(byte)(mat.RoughnessFactor*255),0,255), scene);
+            (mat.OcclusionTex, mat.OcclusionView) =
+                LoadOrDummy(gd, mat.OcclusionPath, srgb: false, new RgbaByte(255,255,255,255), scene);
+        }
         (mat.EmissiveTex, mat.EmissiveView) =
             LoadOrDummy(gd, mat.EmissivePath, srgb: true,
                 new RgbaByte(
@@ -43,10 +67,28 @@ public static class MaterialUploader
             mat.UsePackedRMA
         );
 
+        // Debug: Log material params
+        var bufferSize = System.Runtime.InteropServices.Marshal.SizeOf<MaterialParams>();
+        Console.WriteLine($"Uploading MaterialParams for '{mat.Name}':");
+        Console.WriteLine($"  Buffer size: {bufferSize} bytes");
+        Console.WriteLine($"  BaseColorFactor: {materialParams.BaseColorFactor}");
+        Console.WriteLine($"  EmissiveFactor: {materialParams.EmissiveFactor}");
+        Console.WriteLine($"  MetallicFactor: {materialParams.MetallicFactor}");
+        Console.WriteLine($"  RoughnessFactor: {materialParams.RoughnessFactor}");
+        Console.WriteLine($"  UsePackedRMA: {materialParams.UsePackedRMA}");
+
         mat.ParamsBuffer = factory.CreateBuffer(new BufferDescription(
-            (uint)System.Runtime.InteropServices.Marshal.SizeOf<MaterialParams>(),
+            (uint)bufferSize,
             BufferUsage.UniformBuffer));
         gd.UpdateBuffer(mat.ParamsBuffer, 0, ref materialParams);
+
+        // DEBUG: Log what we're binding
+        Console.WriteLine($"  Creating ResourceSet:");
+        Console.WriteLine($"    NormalTex hash: {mat.NormalTex?.GetHashCode()}");
+        Console.WriteLine($"    MetallicTex hash: {mat.MetallicTex?.GetHashCode()}");
+        Console.WriteLine($"    RoughnessTex hash: {mat.RoughnessTex?.GetHashCode()}");
+        Console.WriteLine($"    OcclusionTex hash: {mat.OcclusionTex?.GetHashCode()}");
+        Console.WriteLine($"    NormalTex == MetallicTex: {mat.NormalTex == mat.MetallicTex}");
 
         mat.ResourceSet = factory.CreateResourceSet(new ResourceSetDescription(layout,
             sampler,
@@ -55,7 +97,10 @@ public static class MaterialUploader
             mat.MetallicView!,
             mat.RoughnessView!,
             mat.OcclusionView!,
-            mat.EmissiveView!,
+            mat.EmissiveView!
+        ));
+
+        mat.ParamsResourceSet = factory.CreateResourceSet(new ResourceSetDescription(paramsLayout,
             mat.ParamsBuffer
         ));
     }
@@ -68,15 +113,33 @@ public static class MaterialUploader
             {
                 if (int.TryParse(path.TrimStart('*'), out int idx) && idx < scene.Textures.Count)
                 {
+                    Console.WriteLine($"    Loading embedded texture {idx}: IsCompressed={scene.Textures[idx].IsCompressed}, DataSize={scene.Textures[idx].CompressedData?.Length ?? scene.Textures[idx].NonCompressedData?.Length ?? 0}");
                     var factory = gd.ResourceFactory;
                     var texSlot = scene.Textures[idx];
                     if (texSlot.IsCompressed)
                     {
-                        using var ms = new MemoryStream(texSlot.CompressedData);
-                        var img = new ImageSharpTexture(ms, srgb);
-                        var tex = img.CreateDeviceTexture(gd, gd.ResourceFactory);
-                        var view = gd.ResourceFactory.CreateTextureView(tex);
-                        return (tex, view);
+                        try
+                        {
+                            using var ms = new MemoryStream(texSlot.CompressedData);
+
+                            // DEBUG: Save first RMA texture to disk to inspect
+                            if (idx == 1 && path == "*1")
+                            {
+                                File.WriteAllBytes("/tmp/rma_texture_1.png", texSlot.CompressedData);
+                                Console.WriteLine($"    DEBUG: Saved RMA texture to /tmp/rma_texture_1.png");
+                            }
+
+                            var img = new ImageSharpTexture(ms, srgb);
+                            var tex = img.CreateDeviceTexture(gd, gd.ResourceFactory);
+                            var view = gd.ResourceFactory.CreateTextureView(tex);
+                            Console.WriteLine($"    Successfully loaded compressed embedded texture {idx}: {tex.Width}x{tex.Height}");
+                            return (tex, view);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"    ERROR loading compressed texture {idx}: {ex.Message}");
+                            // Fall through to dummy texture
+                        }
                     }
                     else
                     {
@@ -106,6 +169,10 @@ public static class MaterialUploader
                         }
                     }
                 }
+                else
+                {
+                    Console.WriteLine($"    ERROR: Embedded texture index {idx} out of bounds (scene has {scene.Textures.Count} textures)");
+                }
             }
 
 
@@ -120,6 +187,7 @@ public static class MaterialUploader
         }
 
         // Dummy fallback
+        Console.WriteLine($"    Using dummy texture for path: {path ?? "null"}");
         Texture dummy = CreateDummyTexture(gd, fallbackColor);
         TextureView dummyView = gd.ResourceFactory.CreateTextureView(dummy);
         return (dummy, dummyView);

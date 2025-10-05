@@ -8,16 +8,14 @@ namespace Whisperleaf.Graphics.Scene;
 public class CameraController
 {
     private readonly Camera _camera;
-    private readonly InputManager _input;
     private readonly Window _window;
 
     private float _speed = 20.0f;
     private float _mouseSensitivity = 0.0025f;
 
-    public CameraController(Camera camera, InputManager input, Window window)
+    public CameraController(Camera camera, Window window)
     {
         _camera = camera;
-        _input = input;
         _window = window;
     }
     private bool skipNextDelta = false;
@@ -25,7 +23,7 @@ public class CameraController
     private bool initialCapture = true;
     public void Update(float deltaTime)
     {
-        if (_input.IsButtonDown(MouseButton.Right))
+        if (InputManager.IsButtonDown(MouseButton.Right))
         {
             _window.ShowCursor(false);
             int centerX = _window.Width / 2;
@@ -54,18 +52,18 @@ public class CameraController
         var right = _camera.GetRight();
         var up = _camera.GetUp();
 
-        if (_input.IsKeyDown(Key.W)) _camera.Position += forward * _speed * dt;
-        if (_input.IsKeyDown(Key.S)) _camera.Position -= forward * _speed * dt;
-        if (_input.IsKeyDown(Key.A)) _camera.Position -= right * _speed * dt;
-        if (_input.IsKeyDown(Key.D)) _camera.Position += right * _speed * dt;
-        if (_input.IsKeyDown(Key.Space)) _camera.Position += up * _speed * dt;
-        if (_input.IsKeyDown(Key.ShiftLeft)) _camera.Position -= up * _speed * dt;
+        if (InputManager.IsKeyDown(Key.W)) _camera.Position += forward * _speed * dt;
+        if (InputManager.IsKeyDown(Key.S)) _camera.Position -= forward * _speed * dt;
+        if (InputManager.IsKeyDown(Key.A)) _camera.Position -= right * _speed * dt;
+        if (InputManager.IsKeyDown(Key.D)) _camera.Position += right * _speed * dt;
+        if (InputManager.IsKeyDown(Key.Space)) _camera.Position += up * _speed * dt;
+        if (InputManager.IsKeyDown(Key.ShiftLeft)) _camera.Position -= up * _speed * dt;
     }
 
     private (int X, int Y) currentMouse = (0, 0);
     private void HandleMouse()
     {
-        var mouseDelta = _input.MouseDelta;
+        var mouseDelta = InputManager.MouseDelta;
 
         if (skipNextDelta)
         { 
@@ -74,7 +72,7 @@ public class CameraController
             return;
         }
         
-        currentMouse = _window.GetMousePosition;
+        currentMouse = InputManager.MousePosition;
         int centerX = _window.Width / 2;
         int centerY = _window.Height / 2;
 

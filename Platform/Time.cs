@@ -26,4 +26,5 @@ public static class Time
     }
     
     public static int FPS => (DeltaTime > 0) ? (int)(1.0f / DeltaTime) : 0;
+    public static float Milliseconds => (float)1000.0f / FPS;
 }

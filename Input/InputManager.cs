@@ -1,27 +1,26 @@
 using System.Collections.Generic;
 using Veldrid;
-using Whisperleaf.Platform;
 
 namespace Whisperleaf.Input;
 
-public class InputManager
+public static class InputManager
 {
-    private readonly HashSet<Key> _keysDown = new();
-    private readonly HashSet<Key> _keysPressedThisFrame = new();
-    private readonly HashSet<Key> _keysReleasedThisFrame = new();
+    private static readonly HashSet<Key> _keysDown = new();
+    private static readonly HashSet<Key> _keysPressedThisFrame = new();
+    private static readonly HashSet<Key> _keysReleasedThisFrame = new();
 
-    private readonly HashSet<MouseButton> _buttonsDown = new();
-    private readonly HashSet<MouseButton> _buttonsPressedThisFrame = new();
-    private readonly HashSet<MouseButton> _buttonsReleasedThisFrame = new();
+    private static readonly HashSet<MouseButton> _buttonsDown = new();
+    private static readonly HashSet<MouseButton> _buttonsPressedThisFrame = new();
+    private static readonly HashSet<MouseButton> _buttonsReleasedThisFrame = new();
 
-    private int _mouseX, _mouseY;
-    private int _lastMouseX, _lastMouseY;
+    private static int _mouseX, _mouseY;
+    private static int _lastMouseX, _lastMouseY;
 
-    public (int X, int Y) MousePosition => (_mouseX, _mouseY);
-    public (int dX, int dY) MouseDelta => (_mouseX - _lastMouseX, _mouseY - _lastMouseY);
-    public float WheelDelta { get; private set; }
+    public static (int X, int Y) MousePosition => (_mouseX, _mouseY);
+    public static (int dX, int dY) MouseDelta => (_mouseX - _lastMouseX, _mouseY - _lastMouseY);
+    public static float WheelDelta { get; private set; }
 
-    public void Update(Window window)
+    public static void Update(InputSnapshot snapshot)
     {
         _keysPressedThisFrame.Clear();
         _keysReleasedThisFrame.Clear();
@@ -31,8 +30,6 @@ public class InputManager
 
         _lastMouseX = _mouseX;
         _lastMouseY = _mouseY;
-
-        InputSnapshot snapshot = window.PumpEvents();
 
         _mouseX = (int)snapshot.MousePosition.X;
         _mouseY = (int)snapshot.MousePosition.Y;
@@ -68,12 +65,12 @@ public class InputManager
     }
 
     // Keyboard queries
-    public bool IsKeyDown(Key key) => _keysDown.Contains(key);
-    public bool WasKeyPressed(Key key) => _keysPressedThisFrame.Contains(key);
-    public bool WasKeyReleased(Key key) => _keysReleasedThisFrame.Contains(key);
+    public static bool IsKeyDown(Key key) => _keysDown.Contains(key);
+    public static bool WasKeyPressed(Key key) => _keysPressedThisFrame.Contains(key);
+    public static bool WasKeyReleased(Key key) => _keysReleasedThisFrame.Contains(key);
 
     // Mouse queries
-    public bool IsButtonDown(MouseButton btn) => _buttonsDown.Contains(btn);
-    public bool WasButtonPressed(MouseButton btn) => _buttonsPressedThisFrame.Contains(btn);
-    public bool WasButtonReleased(MouseButton btn) => _buttonsReleasedThisFrame.Contains(btn);
+    public static bool IsButtonDown(MouseButton btn) => _buttonsDown.Contains(btn);
+    public static bool WasButtonPressed(MouseButton btn) => _buttonsPressedThisFrame.Contains(btn);
+    public static bool WasButtonReleased(MouseButton btn) => _buttonsReleasedThisFrame.Contains(btn);
 }

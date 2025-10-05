@@ -1,4 +1,5 @@
 using Veldrid;
+using Whisperleaf.Editor;
 using Whisperleaf.Graphics.Data;
 using Whisperleaf.Graphics.RenderPasses;
 using Whisperleaf.Graphics.Scene;
@@ -14,13 +15,13 @@ public class Renderer
     private readonly List<IRenderPass> _passes = new();
     private Camera? _camera;
     private CameraController? _cameraController;
-    private InputManager? _inputManager;
+    private EditorManager? _editorManager;
     public Renderer(Window window)
     {
         _window = window;
         _cl = _window.graphicsDevice.ResourceFactory.CreateCommandList();
-        _inputManager = new InputManager();
         PbrLayout.Initialize(_window.graphicsDevice);
+        _editorManager = new EditorManager(_window.graphicsDevice, _window.SdlWindow);
     }
 
     public void AddPass(IRenderPass pass) => _passes.Add(pass);
@@ -28,7 +29,7 @@ public class Renderer
     public void SetCamera(Camera camera)
     {
         _camera = camera;
-        _cameraController = new CameraController(_camera, _inputManager, _window);
+        _cameraController = new CameraController(_camera, _window);
     }
 
     public void Run()
@@ -36,14 +37,17 @@ public class Renderer
         while (_window.Exists)
         {
             Time.Update();
-        
-            _inputManager.Update(_window);
+            
             _cameraController.Update(Time.DeltaTime);
-            _window.PumpEvents();
+            var snapshot = _window.PumpEvents();
+            InputManager.Update(snapshot);
+            _editorManager.Update(Time.DeltaTime, snapshot);
             foreach (var pass in _passes)
             {
                 pass.Render(_window.graphicsDevice, _cl, _camera);
             }
+
+            _editorManager.Render(_cl);
 
             _window.graphicsDevice.SwapBuffers(_window.graphicsDevice.MainSwapchain);
         }

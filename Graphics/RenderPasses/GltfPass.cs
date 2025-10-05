@@ -30,7 +30,7 @@ namespace Whisperleaf.Graphics.RenderPasses
             
             foreach (var mat in cpuMats)
             {
-                MaterialUploader.Upload(gd, PbrLayout.MaterialLayout, mat, scene);
+                MaterialUploader.Upload(gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, mat, scene);
                 _materials.Add(mat);
             }
 

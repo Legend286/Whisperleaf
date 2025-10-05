@@ -65,12 +65,17 @@ namespace Whisperleaf.Graphics.Loaders
                 m.RoughnessPath = ResolveTexture(scene, aim, TextureType.Roughness, modelDir);
                 m.MetallicPath  = ResolveTexture(scene, aim, TextureType.Metalness, modelDir);
 
-                // Check if all three point to the same texture (packed RMA)
-                if (!string.IsNullOrEmpty(m.MetallicPath) &&
-                    m.MetallicPath == m.RoughnessPath &&
-                    m.MetallicPath == m.OcclusionPath)
+                // Check for packed RMA texture
+                // Case 1: All three point to the same texture
+                // Case 2: Metallic and Roughness point to the same texture (common for glTF)
+                if (!string.IsNullOrEmpty(m.MetallicPath) && m.MetallicPath == m.RoughnessPath)
                 {
                     m.UsePackedRMA = true;
+                    // If occlusion is null or points to the same texture, use that texture for all three
+                    if (string.IsNullOrEmpty(m.OcclusionPath))
+                    {
+                        m.OcclusionPath = m.MetallicPath;
+                    }
                 }
                 else
                 {

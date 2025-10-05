@@ -5,6 +5,8 @@ namespace Whisperleaf.Graphics.Data;
 public static class PbrLayout
 {
     public static ResourceLayout MaterialLayout;
+    public static ResourceLayout MaterialParamsLayout;
+
     public static void Initialize(GraphicsDevice gd)
     {
         var factory = gd.ResourceFactory;
@@ -16,7 +18,11 @@ public static class PbrLayout
                 new ResourceLayoutElementDescription("MetallicTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
                 new ResourceLayoutElementDescription("RoughnessTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
                 new ResourceLayoutElementDescription("OcclusionTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
-                new ResourceLayoutElementDescription("EmissiveTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
+                new ResourceLayoutElementDescription("EmissiveTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment)
+            ));
+
+        MaterialParamsLayout = factory.CreateResourceLayout(
+            new ResourceLayoutDescription(
                 new ResourceLayoutElementDescription("MaterialParams", ResourceKind.UniformBuffer, ShaderStages.Fragment)
             ));
     }
