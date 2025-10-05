@@ -1,8 +1,7 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
 using Veldrid;
-using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Graphics;
-using Whisperleaf.Graphics.RenderPasses;
 using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Platform;
 
@@ -17,14 +16,15 @@ class Program
         var renderer = new Renderer(window);
         renderer.SetCamera(camera);
 
-       
-        /*var defaultScenePath = Path.Combine("Resources", "Scenes", "Bistro_Godot.wlscene");
+        var defaultScenePath = Path.Combine("Resources", "Scenes", "Bistro_Godot.wlscene");
         if (File.Exists(defaultScenePath))
         {
-            renderer.LoadScene(SceneAsset.Load(defaultScenePath));
-        }*/
-        
-        renderer.AddPass(new GltfPass(window.graphicsDevice, camera ,"Resources/models/sponza-palace/source/scene.glb"));
+            renderer.LoadScene(defaultScenePath);
+        }
+        else
+        {
+            Console.WriteLine($"No default scene found at '{defaultScenePath}'. Use the editor to import a scene.");
+        }
         renderer.Run();
     }
 }

@@ -8,7 +8,7 @@ namespace Whisperleaf.Editor;
 public abstract class EditorWindow
 {
     public string Title { get; protected set; } = "Window";
-    public bool IsOpen = true;
+    public bool IsOpen = false;
     public ImGuiWindowFlags WindowFlags { get; set; } = ImGuiWindowFlags.None;
 
     /// <summary>

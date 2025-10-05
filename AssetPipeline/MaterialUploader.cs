@@ -2,6 +2,7 @@ using Veldrid;
 using Veldrid.ImageSharp;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using Whisperleaf.AssetPipeline.Cache;
 using Whisperleaf.Graphics.Data;
 
 namespace Whisperleaf.AssetPipeline;
@@ -69,26 +70,11 @@ public static class MaterialUploader
 
         // Debug: Log material params
         var bufferSize = System.Runtime.InteropServices.Marshal.SizeOf<MaterialParams>();
-        Console.WriteLine($"Uploading MaterialParams for '{mat.Name}':");
-        Console.WriteLine($"  Buffer size: {bufferSize} bytes");
-        Console.WriteLine($"  BaseColorFactor: {materialParams.BaseColorFactor}");
-        Console.WriteLine($"  EmissiveFactor: {materialParams.EmissiveFactor}");
-        Console.WriteLine($"  MetallicFactor: {materialParams.MetallicFactor}");
-        Console.WriteLine($"  RoughnessFactor: {materialParams.RoughnessFactor}");
-        Console.WriteLine($"  UsePackedRMA: {materialParams.UsePackedRMA}");
 
         mat.ParamsBuffer = factory.CreateBuffer(new BufferDescription(
             (uint)bufferSize,
             BufferUsage.UniformBuffer));
         gd.UpdateBuffer(mat.ParamsBuffer, 0, ref materialParams);
-
-        // DEBUG: Log what we're binding
-        Console.WriteLine($"  Creating ResourceSet:");
-        Console.WriteLine($"    NormalTex hash: {mat.NormalTex?.GetHashCode()}");
-        Console.WriteLine($"    MetallicTex hash: {mat.MetallicTex?.GetHashCode()}");
-        Console.WriteLine($"    RoughnessTex hash: {mat.RoughnessTex?.GetHashCode()}");
-        Console.WriteLine($"    OcclusionTex hash: {mat.OcclusionTex?.GetHashCode()}");
-        Console.WriteLine($"    NormalTex == MetallicTex: {mat.NormalTex == mat.MetallicTex}");
 
         mat.ResourceSet = factory.CreateResourceSet(new ResourceSetDescription(layout,
             sampler,
@@ -109,6 +95,25 @@ public static class MaterialUploader
     {
         if (!string.IsNullOrWhiteSpace(path))
         {
+            if (Path.GetExtension(path).Equals(".wltex", StringComparison.OrdinalIgnoreCase))
+            {
+                if (File.Exists(path))
+                {
+                    try
+                    {
+                        return CachedTextureUploader.LoadAndUpload(gd, path);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"    Failed to load cached texture '{path}': {ex.Message}");
+                        return CreateDummyTextureWithView(gd, fallbackColor);
+                    }
+                }
+
+                Console.WriteLine($"    Cached texture missing on disk: {path}");
+                return CreateDummyTextureWithView(gd, fallbackColor);
+            }
+
             if (path.StartsWith("*") && scene != null && scene.HasTextures)
             {
                 if (int.TryParse(path.TrimStart('*'), out int idx) && idx < scene.Textures.Count)
@@ -188,9 +193,7 @@ public static class MaterialUploader
 
         // Dummy fallback
         Console.WriteLine($"    Using dummy texture for path: {path ?? "null"}");
-        Texture dummy = CreateDummyTexture(gd, fallbackColor);
-        TextureView dummyView = gd.ResourceFactory.CreateTextureView(dummy);
-        return (dummy, dummyView);
+        return CreateDummyTextureWithView(gd, fallbackColor);
     }
 
     private static Texture CreateDummyTexture(GraphicsDevice gd, RgbaByte color)
@@ -201,5 +204,12 @@ public static class MaterialUploader
             TextureUsage.Sampled));
         gd.UpdateTexture(tex, new[] { color }, 0, 0, 0, 1, 1, 1, 0, 0);
         return tex;
+    }
+
+    private static (Texture tex, TextureView view) CreateDummyTextureWithView(GraphicsDevice gd, RgbaByte color)
+    {
+        Texture dummy = CreateDummyTexture(gd, color);
+        TextureView dummyView = gd.ResourceFactory.CreateTextureView(dummy);
+        return (dummy, dummyView);
     }
 }
