@@ -16,7 +16,8 @@ public static class PbrLayout
                 new ResourceLayoutElementDescription("MetallicTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
                 new ResourceLayoutElementDescription("RoughnessTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
                 new ResourceLayoutElementDescription("OcclusionTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
-                new ResourceLayoutElementDescription("EmissiveTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment)
+                new ResourceLayoutElementDescription("EmissiveTex", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
+                new ResourceLayoutElementDescription("MaterialParams", ResourceKind.UniformBuffer, ShaderStages.Fragment)
             ));
     }
 

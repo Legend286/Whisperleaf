@@ -2,6 +2,7 @@ using Veldrid;
 using Veldrid.ImageSharp;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using Whisperleaf.Graphics.Data;
 
 namespace Whisperleaf.AssetPipeline;
 public static class MaterialUploader
@@ -33,6 +34,20 @@ public static class MaterialUploader
             SamplerFilter.MinLinear_MagLinear_MipLinear,
             null, 0, 0, 0, 0, SamplerBorderColor.TransparentBlack));
 
+        // Create uniform buffer for material parameters
+        var materialParams = new MaterialParams(
+            mat.BaseColorFactor,
+            mat.EmissiveFactor,
+            mat.MetallicFactor,
+            mat.RoughnessFactor,
+            mat.UsePackedRMA
+        );
+
+        mat.ParamsBuffer = factory.CreateBuffer(new BufferDescription(
+            (uint)System.Runtime.InteropServices.Marshal.SizeOf<MaterialParams>(),
+            BufferUsage.UniformBuffer));
+        gd.UpdateBuffer(mat.ParamsBuffer, 0, ref materialParams);
+
         mat.ResourceSet = factory.CreateResourceSet(new ResourceSetDescription(layout,
             sampler,
             mat.BaseColorView!,
@@ -40,7 +55,8 @@ public static class MaterialUploader
             mat.MetallicView!,
             mat.RoughnessView!,
             mat.OcclusionView!,
-            mat.EmissiveView!
+            mat.EmissiveView!,
+            mat.ParamsBuffer
         ));
     }
 

@@ -59,21 +59,22 @@ namespace Whisperleaf.Graphics.Loaders
                                ResolveTexture(scene, aim, TextureType.Normals, modelDir);
                 m.EmissivePath = ResolveTexture(scene, aim, TextureType.Emissive, modelDir);
 
-                // Some exporters put roughness/metallic/ao into one texture
-                var rma = ResolveTexture(scene, aim, TextureType.Unknown, modelDir); // Assimp might not expose directly
-                if (rma != null)
+                // Try to load individual PBR maps first
+                m.OcclusionPath = ResolveTexture(scene, aim, TextureType.AmbientOcclusion, modelDir) ??
+                                  ResolveTexture(scene, aim, TextureType.Ambient, modelDir);
+                m.RoughnessPath = ResolveTexture(scene, aim, TextureType.Roughness, modelDir);
+                m.MetallicPath  = ResolveTexture(scene, aim, TextureType.Metalness, modelDir);
+
+                // Check if all three point to the same texture (packed RMA)
+                if (!string.IsNullOrEmpty(m.MetallicPath) &&
+                    m.MetallicPath == m.RoughnessPath &&
+                    m.MetallicPath == m.OcclusionPath)
                 {
-                    m.OcclusionPath = rma;
-                    m.RoughnessPath = rma;
-                    m.MetallicPath = rma;
+                    m.UsePackedRMA = true;
                 }
                 else
                 {
-                    // fallback to individual maps
-                    m.OcclusionPath = ResolveTexture(scene, aim, TextureType.AmbientOcclusion, modelDir) ??
-                                      ResolveTexture(scene, aim, TextureType.Ambient, modelDir);
-                    m.RoughnessPath = ResolveTexture(scene, aim, TextureType.Roughness, modelDir);
-                    m.MetallicPath  = ResolveTexture(scene, aim, TextureType.Metalness, modelDir);
+                    m.UsePackedRMA = false;
                 }
 
                 materials.Add(m);

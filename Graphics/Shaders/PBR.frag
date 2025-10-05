@@ -29,9 +29,11 @@ layout(set = 1, binding = 6) uniform texture2D EmissiveTex;
 layout(set = 1, binding = 7) uniform MaterialParams {
     vec4  u_BaseColorFactor;  // rgba
     vec3  u_EmissiveFactor;   // rgb
+    int padding1;
     float u_MetallicFactor;   // scalar multiplier
     float u_RoughnessFactor;  // scalar multiplier
     int   u_UsePackedRMA;     // 0 = separate maps, 1 = packed in MetallicTex (R=AO,G=R,B=M)
+    int padding2;
 };
 
 // -------------------- PBR helpers --------------------
@@ -104,23 +106,13 @@ void main()
     vec3 emissiveT = texture(sampler2D(EmissiveTex,    MainSampler), f_UV).rgb;
 
     float metallic, roughness, ao;
-    if (u_UsePackedRMA == 1)
-    {
-        // Packed RMA in MetallicTex: R=AO, G=R, B=M
-        vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
-        ao        = rma.r;
-        roughness = clamp(rma.g, 0.04, 1.0);
-        metallic  = clamp(rma.b,  0.0,  1.0);
-    }
-    else
-    {
         float m = texture(sampler2D(MetallicTex,  MainSampler), f_UV).r;
         float r = texture(sampler2D(RoughnessTex, MainSampler), f_UV).g;
         float a = texture(sampler2D(OcclusionTex, MainSampler), f_UV).r;
         metallic  = clamp(m,  0.0, 1.0);
         roughness = clamp(r, 0.04, 1.0);
         ao        = a;
-    }
+   
 
     vec4 baseColor = baseTex;
     vec3 emissive  = emissiveT;
@@ -135,7 +127,7 @@ void main()
     vec3 H = normalize(V + L);
     vec3 lightColor = vec3(1.0);
     
-    vec3 final = PBR(N, V, L, baseTex.rgb, metallic, 0.2, vec3(0.04), lightColor, 1.0f);
+    vec3 final = PBR(N, V, L, baseTex.rgb, metallic, roughness, vec3(0.04), lightColor, 1.0f);
 
     
     out_Color = vec4(final, baseColor.a);
