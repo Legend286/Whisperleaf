@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 using Veldrid;
 using Whisperleaf.AssetPipeline;
 using Whisperleaf.AssetPipeline.Cache;
@@ -15,15 +16,32 @@ public sealed class GltfPass : IRenderPass, IDisposable
     private readonly GraphicsDevice _gd;
     private readonly Pipeline _pipeline;
     private readonly CameraUniformBuffer _cameraBuffer;
+    private readonly ModelUniformBuffer _modelBuffer;
 
     private readonly List<MeshGpu> _meshes = new();
     private readonly List<MaterialData> _materials = new();
+    private readonly List<MeshInstance> _meshInstances = new();
+
+    private readonly struct MeshInstance
+    {
+        public readonly MeshGpu Mesh;
+        public readonly int MaterialIndex;
+        public readonly int TransformIndex;
+
+        public MeshInstance(MeshGpu mesh, int materialIndex, int transformIndex)
+        {
+            Mesh = mesh;
+            MaterialIndex = materialIndex;
+            TransformIndex = transformIndex;
+        }
+    }
 
     public GltfPass(GraphicsDevice gd)
     {
         _gd = gd;
 
         _cameraBuffer = new CameraUniformBuffer(gd);
+        _modelBuffer = new ModelUniformBuffer(gd);
 
         var vertexLayout = new VertexLayoutDescription(
             new VertexElementDescription("v_Position", VertexElementSemantic.Position, VertexElementFormat.Float3),
@@ -40,7 +58,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
             gd.MainSwapchain.Framebuffer,
             enableDepth: true,
             enableBlend: false,
-            extraLayouts: new[] { _cameraBuffer.Layout, PbrLayout.MaterialLayout }
+            extraLayouts: new[] { _cameraBuffer.Layout, _modelBuffer.Layout, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout }
         );
     }
 
@@ -58,39 +76,52 @@ public sealed class GltfPass : IRenderPass, IDisposable
         LoadScene(sceneAsset);
     }
 
+    public int InstanceCount => _meshInstances.Count;
+
+    public void UpdateInstanceTransform(int instanceIndex, Matrix4x4 transform)
+    {
+        if ((uint)instanceIndex >= _meshInstances.Count)
+            throw new ArgumentOutOfRangeException(nameof(instanceIndex));
+
+        var instance = _meshInstances[instanceIndex];
+        _modelBuffer.UpdateTransform(instance.TransformIndex, transform);
+    }
+
     public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null)
     {
-        if (camera == null || _meshes.Count == 0)
+        if (camera == null || _meshInstances.Count == 0)
             return;
 
         _cameraBuffer.Update(gd, camera);
 
-        cl.Begin();
-        cl.SetFramebuffer(gd.MainSwapchain.Framebuffer);
-        cl.ClearColorTarget(0, RgbaFloat.Black);
-        cl.ClearDepthStencil(1f);
-
         cl.SetPipeline(_pipeline);
         cl.SetGraphicsResourceSet(0, _cameraBuffer.ResourceSet);
+        cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
 
-        for (int i = 0; i < _meshes.Count; i++)
+        for (int i = 0; i < _meshInstances.Count; i++)
         {
-            var mesh = _meshes[i];
+            var instance = _meshInstances[i];
+            var mesh = instance.Mesh;
 
             cl.SetVertexBuffer(0, mesh.VertexBuffer);
             cl.SetIndexBuffer(mesh.IndexBuffer, IndexFormat.UInt32);
-
-            var material = ResolveMaterial(mesh.MaterialIndex);
-            if (material?.ResourceSet != null)
+           
+            var material = ResolveMaterial(instance.MaterialIndex);
+            if (material != null)
             {
-                cl.SetGraphicsResourceSet(1, material.ResourceSet);
+                if (material.ResourceSet != null)
+                {
+                    cl.SetGraphicsResourceSet(2, material.ResourceSet);
+                }
+
+                if (material.ParamsResourceSet != null)
+                {
+                    cl.SetGraphicsResourceSet(3, material.ParamsResourceSet);
+                }
             }
-
-            cl.DrawIndexed((uint)mesh.IndexCount, 1, 0, 0, 0);
+            cl.DrawIndexed((uint)mesh.IndexCount, 1, 0, 0, (uint)instance.TransformIndex);
         }
-
-        cl.End();
-        gd.SubmitCommands(cl);
+        
     }
 
     private void LoadMaterials(SceneAsset scene)
@@ -133,24 +164,30 @@ public sealed class GltfPass : IRenderPass, IDisposable
 
         foreach (var node in scene.RootNodes)
         {
-            LoadMeshRecursive(node);
+            LoadMeshRecursive(node, Matrix4x4.Identity);
         }
     }
 
-    private void LoadMeshRecursive(SceneNode node)
+    private void LoadMeshRecursive(SceneNode node, Matrix4x4 parentWorld)
     {
+        var worldTransform = node.LocalTransform * parentWorld;
+
         if (node.Mesh != null)
         {
             var meshRef = node.Mesh;
             if (TryLoadMesh(meshRef, out MeshGpu? meshGpu))
             {
-                _meshes.Add(meshGpu!);
+                var mesh = meshGpu!;
+                _meshes.Add(mesh);
+
+                int transformIndex = _modelBuffer.Allocate(worldTransform);
+                _meshInstances.Add(new MeshInstance(mesh, mesh.MaterialIndex, transformIndex));
             }
         }
 
         foreach (var child in node.Children)
         {
-            LoadMeshRecursive(child);
+            LoadMeshRecursive(child, worldTransform);
         }
     }
 
@@ -217,12 +254,16 @@ public sealed class GltfPass : IRenderPass, IDisposable
             mat.Dispose();
         }
         _materials.Clear();
+
+        _meshInstances.Clear();
+        _modelBuffer.Clear();
     }
 
     public void Dispose()
     {
         ClearResources();
         _cameraBuffer.Dispose();
+        _modelBuffer.Dispose();
         _pipeline.Dispose();
     }
 }

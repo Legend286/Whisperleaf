@@ -72,11 +72,7 @@ public class EditorManager : IDisposable
 
     public void Render(CommandList cl)
     {
-        cl.Begin();
-        cl.SetFramebuffer(_gd.MainSwapchain.Framebuffer);
         _imguiController.Render(_gd, cl);
-        cl.End();
-        _gd.SubmitCommands(cl);
     }
 
     public void WindowResized(int width, int height)

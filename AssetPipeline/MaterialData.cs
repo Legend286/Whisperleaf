@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Numerics;
 using Veldrid;
 using Veldrid.ImageSharp;
@@ -45,17 +46,28 @@ namespace Whisperleaf.AssetPipeline
 
         public void Dispose()
         {
-            BaseColorTex?.Dispose();
+            var disposedTextures = new HashSet<Texture?>();
+
+            void DisposeTexture(Texture? tex)
+            {
+                if (tex != null && disposedTextures.Add(tex))
+                {
+                    tex.Dispose();
+                }
+            }
+
+            DisposeTexture(BaseColorTex);
+            DisposeTexture(MetallicTex);
+            DisposeTexture(RoughnessTex);
+            DisposeTexture(NormalTex);
+            DisposeTexture(OcclusionTex);
+            DisposeTexture(EmissiveTex);
+
             BaseColorView?.Dispose();
-            MetallicTex?.Dispose();
             MetallicView?.Dispose();
-            RoughnessTex?.Dispose();
             RoughnessView?.Dispose();
-            NormalTex?.Dispose();
             NormalView?.Dispose();
-            OcclusionTex?.Dispose();
             OcclusionView?.Dispose();
-            EmissiveTex?.Dispose();
             EmissiveView?.Dispose();
             ParamsBuffer?.Dispose();
             ResourceSet?.Dispose();

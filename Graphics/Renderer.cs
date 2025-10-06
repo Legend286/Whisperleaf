@@ -68,6 +68,12 @@ public class Renderer
             var snapshot = _window.PumpEvents();
             InputManager.Update(snapshot);
             _editorManager.Update(Time.DeltaTime, snapshot);
+            _cl.Begin();
+            
+            _cl.SetFramebuffer(_window.graphicsDevice.MainSwapchain.Framebuffer);
+            _cl.ClearColorTarget(0, RgbaFloat.Black);
+            _cl.ClearDepthStencil(1.0f);
+            
             foreach (var pass in _passes)
             {
                 pass.Render(_window.graphicsDevice, _cl, _camera);
@@ -75,6 +81,8 @@ public class Renderer
 
             _editorManager.Render(_cl);
 
+            _cl.End();
+            _window.graphicsDevice.SubmitCommands(_cl);
             _window.graphicsDevice.SwapBuffers(_window.graphicsDevice.MainSwapchain);
         }
     }

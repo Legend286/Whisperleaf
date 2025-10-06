@@ -11,7 +11,7 @@ public class PipelineFactory
         string fragmentPath,
         VertexLayoutDescription vertexLayout,
         Framebuffer target,
-        bool enableDepth = false,
+        bool enableDepth = true,
         bool enableBlend = false,
         ResourceLayout[]? extraLayouts = null)
     {

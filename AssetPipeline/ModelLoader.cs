@@ -87,7 +87,7 @@ namespace Whisperleaf.Graphics.Loaders
 
             // ----- Meshes (flattened from the node hierarchy)
             var meshes = new List<MeshData>(scene.MeshCount);
-            TraverseNode(scene, scene.RootNode, System.Numerics.Matrix4x4.Identity, meshes);
+            TraverseNode(scene, scene.RootNode, System.Numerics.Matrix4x4.CreateScale(100.0f), meshes);
 
             return (meshes, materials, scene);
         }
