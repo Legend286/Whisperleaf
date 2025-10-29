@@ -110,5 +110,5 @@ void main()
     vec3 ambient = baseColor.rgb * ao * 0.03;
     vec3 finalColor =  lighting;
 
-    out_Color = vec4(finalColor, baseColor.a);
+    out_Color = vec4(vec3(1), baseColor.a);
 }

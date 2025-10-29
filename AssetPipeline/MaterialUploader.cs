@@ -21,11 +21,11 @@ public static class MaterialUploader
         {
             // Load the packed RMA texture once and reuse for all three slots
             // glTF standard: R=AO (default 255), G=Roughness, B=Metallic
-            Console.WriteLine($"  Loading RMA from: {mat.MetallicPath}");
+          //  Console.WriteLine($"  Loading RMA from: {mat.MetallicPath}");
             (mat.MetallicTex, mat.MetallicView) =
                 LoadOrDummy(gd, mat.MetallicPath, srgb: false, new RgbaByte(255, (byte)(mat.RoughnessFactor*255), (byte)(mat.MetallicFactor*255), 255), scene);
 
-            Console.WriteLine($"  RMA texture loaded: {mat.MetallicTex.Width}x{mat.MetallicTex.Height}");
+           // Console.WriteLine($"  RMA texture loaded: {mat.MetallicTex.Width}x{mat.MetallicTex.Height}");
 
             // Create separate views of the same texture for each slot
             // (Some graphics APIs don't like binding the same view to multiple slots)
@@ -34,7 +34,7 @@ public static class MaterialUploader
             mat.OcclusionTex = mat.MetallicTex;
             mat.OcclusionView = factory.CreateTextureView(mat.MetallicTex);
 
-            Console.WriteLine($"  DEBUG: After RMA packing - created 3 separate views of same texture");
+         //   Console.WriteLine($"  DEBUG: After RMA packing - created 3 separate views of same texture");
         }
         else
         {
@@ -118,7 +118,7 @@ public static class MaterialUploader
             {
                 if (int.TryParse(path.TrimStart('*'), out int idx) && idx < scene.Textures.Count)
                 {
-                    Console.WriteLine($"    Loading embedded texture {idx}: IsCompressed={scene.Textures[idx].IsCompressed}, DataSize={scene.Textures[idx].CompressedData?.Length ?? scene.Textures[idx].NonCompressedData?.Length ?? 0}");
+                   // Console.WriteLine($"    Loading embedded texture {idx}: IsCompressed={scene.Textures[idx].IsCompressed}, DataSize={scene.Textures[idx].CompressedData?.Length ?? scene.Textures[idx].NonCompressedData?.Length ?? 0}");
                     var factory = gd.ResourceFactory;
                     var texSlot = scene.Textures[idx];
                     if (texSlot.IsCompressed)
@@ -137,7 +137,7 @@ public static class MaterialUploader
                             var img = new ImageSharpTexture(ms, srgb);
                             var tex = img.CreateDeviceTexture(gd, gd.ResourceFactory);
                             var view = gd.ResourceFactory.CreateTextureView(tex);
-                            Console.WriteLine($"    Successfully loaded compressed embedded texture {idx}: {tex.Width}x{tex.Height}");
+                          //  Console.WriteLine($"    Successfully loaded compressed embedded texture {idx}: {tex.Width}x{tex.Height}");
                             return (tex, view);
                         }
                         catch (Exception ex)
@@ -192,7 +192,7 @@ public static class MaterialUploader
         }
 
         // Dummy fallback
-        Console.WriteLine($"    Using dummy texture for path: {path ?? "null"}");
+      //  Console.WriteLine($"    Using dummy texture for path: {path ?? "null"}");
         return CreateDummyTextureWithView(gd, fallbackColor);
     }
 

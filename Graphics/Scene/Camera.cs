@@ -11,6 +11,9 @@ public class Camera
     public float AspectRatio { get; set; }
     public float Near { get; set; } = 0.1f;
     public float Far { get; set; } = 10000.0f;
+    public float ViewProjection => (GetViewMatrix() * GetProjectionMatrix()).M11;
+    public Matrix4x4 ViewMatrix => GetViewMatrix();
+    public Matrix4x4 ProjectionMatrix => GetProjectionMatrix();
 
     public Camera(float aspectRatio)
     {

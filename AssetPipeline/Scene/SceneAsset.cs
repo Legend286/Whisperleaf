@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text.Json;
+using Whisperleaf.Utilities.Serialization;
 
 namespace Whisperleaf.AssetPipeline.Scene;
 
@@ -19,13 +20,11 @@ public class SceneAsset
     /// <summary>
     /// Save scene to .wlscene JSON file
     /// </summary>
+    private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
+
     public void Save(string path)
     {
-        var json = JsonSerializer.Serialize(this, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            IncludeFields = false
-        });
+        var json = JsonSerializer.Serialize(this, SerializerOptions);
         File.WriteAllText(path, json);
     }
 
@@ -35,8 +34,51 @@ public class SceneAsset
     public static SceneAsset Load(string path)
     {
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<SceneAsset>(json)
-               ?? throw new Exception($"Failed to deserialize scene: {path}");
+        var scene = JsonSerializer.Deserialize<SceneAsset>(json, SerializerOptions)
+                    ?? throw new Exception($"Failed to deserialize scene: {path}");
+
+        FixupTransforms(scene);
+        return scene;
+    }
+
+    private static JsonSerializerOptions CreateSerializerOptions()
+    {
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNameCaseInsensitive = true
+        };
+        options.Converters.Add(new Matrix4x4JsonConverter());
+        return options;
+    }
+
+    private static void FixupTransforms(SceneAsset scene)
+    {
+        foreach (var root in scene.RootNodes)
+        {
+            FixupNode(root);
+        }
+    }
+
+    private static void FixupNode(SceneNode node)
+    {
+        if (IsZeroMatrix(node.LocalTransform))
+        {
+            node.LocalTransform = Matrix4x4.Identity;
+        }
+
+        foreach (var child in node.Children)
+        {
+            FixupNode(child);
+        }
+    }
+
+    private static bool IsZeroMatrix(in Matrix4x4 matrix)
+    {
+        return matrix.M11 == 0f && matrix.M12 == 0f && matrix.M13 == 0f && matrix.M14 == 0f &&
+               matrix.M21 == 0f && matrix.M22 == 0f && matrix.M23 == 0f && matrix.M24 == 0f &&
+               matrix.M31 == 0f && matrix.M32 == 0f && matrix.M33 == 0f && matrix.M34 == 0f &&
+               matrix.M41 == 0f && matrix.M42 == 0f && matrix.M43 == 0f && matrix.M44 == 0f;
     }
 }
 

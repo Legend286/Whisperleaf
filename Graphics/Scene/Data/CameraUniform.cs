@@ -16,7 +16,7 @@ namespace Whisperleaf.Graphics.Scene.Data
         {
             View = view;
             Proj = proj;
-            ViewProjection = proj * view;
+            ViewProjection = view * proj;
             CameraPos = camPos;
             _padding = 0;
         }

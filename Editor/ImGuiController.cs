@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using ImGuizmoNET;
 using Veldrid;
 using Veldrid.SPIRV;
 
@@ -100,8 +101,9 @@ void main()
             _windowWidth = width;
             _windowHeight = height;
 
-            ImGui.CreateContext();
+            var ctx = ImGui.CreateContext();
             var io = ImGui.GetIO();
+            ImGuizmo.SetImGuiContext(ctx);
             io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
             io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard |
                 ImGuiConfigFlags.DockingEnable;
@@ -320,6 +322,7 @@ void main()
 
             _frameBegun = true;
             ImGui.NewFrame();
+            ImGuizmo.BeginFrame();
         }
 
         /// <summary>

@@ -1,4 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Numerics;
+using ImGuiNET;
+using ImGuizmoNET;
 using Veldrid;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor;
@@ -19,12 +23,17 @@ public class Renderer
     private readonly GltfPass _scenePass;
     private Camera? _camera;
     private CameraController? _cameraController;
+    private SceneNode? _selectedNode;
+    private OPERATION _gizmoOperation;
     public Renderer(Window window)
     {
         _window = window;
         _cl = _window.graphicsDevice.ResourceFactory.CreateCommandList();
         PbrLayout.Initialize(_window.graphicsDevice);
         _editorManager = new EditorManager(_window.graphicsDevice, _window.SdlWindow);
+        _editorManager.SceneNodeSelected += OnSceneNodeSelected;
+        _editorManager.GizmoOperationChanged += operation => _gizmoOperation = operation;
+        _gizmoOperation = _editorManager.GizmoOperation;
 
         _scenePass = new GltfPass(_window.graphicsDevice);
         _passes.Add(_scenePass);
@@ -79,11 +88,44 @@ public class Renderer
                 pass.Render(_window.graphicsDevice, _cl, _camera);
             }
 
+            HandleGizmo();
             _editorManager.Render(_cl);
 
             _cl.End();
             _window.graphicsDevice.SubmitCommands(_cl);
             _window.graphicsDevice.SwapBuffers(_window.graphicsDevice.MainSwapchain);
+        }
+    }
+
+    private void OnSceneNodeSelected(SceneNode? node)
+    {
+        _selectedNode = node;
+    }
+
+    private void HandleGizmo()
+    {
+        if (_camera == null || _selectedNode == null)
+        {
+            return;
+        }
+
+        if (!_scenePass.TryGetWorldTransform(_selectedNode, out var gizmoTransform))
+        {
+            return;
+        }
+
+        var view = _camera.ViewMatrix;
+        var projection = _camera.ProjectionMatrix;
+
+        ImGuizmo.SetOrthographic(false);
+        var viewport = ImGui.GetMainViewport();
+       
+        ImGuizmo.SetRect(0,0,_window.Width, _window.Height);
+        ImGuizmo.Manipulate(ref view.M11, ref projection.M11, _gizmoOperation, MODE.WORLD, ref gizmoTransform.M11);
+
+        if (ImGuizmo.IsUsing())
+        {
+            _scenePass.ApplyWorldTransform(_selectedNode, gizmoTransform);
         }
     }
 

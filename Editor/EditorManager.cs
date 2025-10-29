@@ -1,10 +1,14 @@
 using System;
 using System.IO;
+using System.Numerics;
 using ImGuiNET;
+using ImGuizmoNET;
+using ImPlotNET;
 using Veldrid;
 using Veldrid.Sdl2;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor.Windows;
+using Whisperleaf.Graphics.Scene;
 
 namespace Whisperleaf.Editor;
 
@@ -26,6 +30,10 @@ public class EditorManager : IDisposable
     private SceneAsset? _currentScene;
 
     public event Action<SceneAsset>? SceneRequested;
+    public event Action<SceneNode?>? SceneNodeSelected;
+    public event Action<OPERATION>? GizmoOperationChanged;
+
+    public OPERATION GizmoOperation { get; private set; } = OPERATION.TRANSLATE;
 
     public EditorManager(GraphicsDevice gd, Sdl2Window window)
     {
@@ -51,6 +59,9 @@ public class EditorManager : IDisposable
         _assetBrowser.OnSceneSelected += OnSceneLoaded;
         _importWizard.OnImportComplete += OnImportComplete;
         window.DragDrop += OnWindowDragDrop;
+        _sceneInspector.NodeSelected += node => SceneNodeSelected?.Invoke(node);
+        _sceneInspector.GizmoOperationChanged += OnGizmoOperationChanged;
+        GizmoOperation = _sceneInspector.CurrentOperation;
     }
 
     public void Update(float deltaTime, InputSnapshot snapshot)
@@ -73,6 +84,17 @@ public class EditorManager : IDisposable
     public void Render(CommandList cl)
     {
         _imguiController.Render(_gd, cl);
+    }
+
+    private void OnGizmoOperationChanged(OPERATION operation)
+    {
+        if (GizmoOperation == operation)
+        {
+            return;
+        }
+
+        GizmoOperation = operation;
+        GizmoOperationChanged?.Invoke(operation);
     }
 
     public void WindowResized(int width, int height)
@@ -118,7 +140,6 @@ public class EditorManager : IDisposable
             {
                 if (ImGui.MenuItem("About"))
                 {
-                    // TODO: About dialog
                 }
 
                 ImGui.EndMenu();

@@ -1,5 +1,7 @@
+using System;
 using System.Numerics;
 using ImGuiNET;
+using ImGuizmoNET;
 using Whisperleaf.AssetPipeline.Scene;
 
 namespace Whisperleaf.Editor.Windows;
@@ -11,6 +13,12 @@ public class SceneInspectorWindow : EditorWindow
 {
     private SceneAsset? _currentScene;
     private SceneNode? _selectedNode;
+    private OPERATION _gizmoOperation = OPERATION.TRANSLATE;
+
+    public event Action<SceneNode?>? NodeSelected;
+    public event Action<OPERATION>? GizmoOperationChanged;
+
+    public OPERATION CurrentOperation => _gizmoOperation;
 
     public SceneInspectorWindow()
     {
@@ -21,6 +29,7 @@ public class SceneInspectorWindow : EditorWindow
     {
         _currentScene = scene;
         _selectedNode = null;
+        NodeSelected?.Invoke(null);
     }
 
     protected override void OnDraw()
@@ -70,6 +79,17 @@ public class SceneInspectorWindow : EditorWindow
         }
     }
 
+    private void SetOperation(OPERATION operation)
+    {
+        if (_gizmoOperation == operation)
+        {
+            return;
+        }
+
+        _gizmoOperation = operation;
+        GizmoOperationChanged?.Invoke(operation);
+    }
+
     private void DrawNodeTree(SceneNode node)
     {
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick;
@@ -88,6 +108,7 @@ public class SceneInspectorWindow : EditorWindow
         if (ImGui.IsItemClicked())
         {
             _selectedNode = node;
+            NodeSelected?.Invoke(_selectedNode);
         }
 
         // Children
@@ -122,9 +143,30 @@ public class SceneInspectorWindow : EditorWindow
             ImGui.TreePop();
         }
 
-        // Mesh info
         if (node.Mesh != null)
         {
+            ImGui.Separator();
+            ImGui.Text("Gizmo");
+
+            bool translate = _gizmoOperation == OPERATION.TRANSLATE;
+            bool rotate = _gizmoOperation == OPERATION.ROTATE;
+            bool scale = _gizmoOperation == OPERATION.SCALE;
+
+            if (ImGui.RadioButton("Translate", translate))
+            {
+                SetOperation(OPERATION.TRANSLATE);
+            }
+            ImGui.SameLine();
+            if (ImGui.RadioButton("Rotate", rotate))
+            {
+                SetOperation(OPERATION.ROTATE);
+            }
+            ImGui.SameLine();
+            if (ImGui.RadioButton("Scale", scale))
+            {
+                SetOperation(OPERATION.SCALE);
+            }
+
             ImGui.Separator();
             if (ImGui.TreeNodeEx("Mesh", ImGuiTreeNodeFlags.DefaultOpen))
             {

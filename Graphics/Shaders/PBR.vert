@@ -40,5 +40,5 @@ void main()
     f_UV = v_TexCoord * vec2(1,-1);
 
     // Clip space
-    gl_Position = u_Proj * u_View * worldPos;
+    gl_Position = u_Proj * u_View * mat4(1) * worldPos;
 }
