@@ -16,9 +16,8 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="assimp_native" Version="4.0.1" />
+      <PackageReference Include="AssimpNet" Version="5.0.0-beta1" />
       <PackageReference Include="BCnEncoder.Net" Version="2.2.1" />
-      <PackageReference Include="StirlingLabs.Assimp.Net" Version="23.4.1" />
       <PackageReference Include="Twizzle.ImGui-Bundle.NET" Version="1.91.5.2" />
       <PackageReference Include="Veldrid" Version="4.9.0" />
       <PackageReference Include="Veldrid.ImageSharp" Version="4.9.0" />
@@ -27,6 +26,7 @@
       <PackageReference Include="Veldrid.SDL2" Version="4.9.0" />
       <PackageReference Include="Veldrid.SPIRV" Version="1.0.15" />
       <PackageReference Include="Veldrid.StartupUtilities" Version="4.9.0" />
+      <PackageReference Remove="StirlingLabs.assimp.native.win-x64" />
     </ItemGroup>
 
 </Project>

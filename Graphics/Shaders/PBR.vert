@@ -15,6 +15,10 @@ layout(set = 0, binding = 0) uniform CameraBuffer {
     vec3 u_CameraPos;
 };
 
+layout(std140, set = 1, binding = 0) buffer ModelTransforms {
+    mat4 u_Model[];
+};
+
 
 // Vertex outputs
 layout(location = 0) out vec3 f_WorldPos;
@@ -25,7 +29,7 @@ layout(location = 3) out mat3 f_TBN;
 void main()
 {
     // World position
-    vec4 worldPos = vec4(v_Position, 1.0);
+    vec4 worldPos = u_Model[gl_InstanceIndex] * vec4(v_Position, 1.0);
     f_WorldPos = worldPos.xyz;
 
     // Normal (to world space)

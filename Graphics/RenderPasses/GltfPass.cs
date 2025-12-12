@@ -18,6 +18,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
     private readonly Pipeline _pipeline;
     private readonly CameraUniformBuffer _cameraBuffer;
     private readonly ModelUniformBuffer _modelBuffer;
+    private readonly LightUniformBuffer _lightBuffer;
 
     private readonly List<MeshGpu> _meshes = new();
     private readonly List<MaterialData> _materials = new();
@@ -49,6 +50,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
 
         _cameraBuffer = new CameraUniformBuffer(gd);
         _modelBuffer = new ModelUniformBuffer(gd);
+        _lightBuffer = new LightUniformBuffer(gd);
 
         var vertexLayout = new VertexLayoutDescription(
             new VertexElementDescription("v_Position", VertexElementSemantic.Position, VertexElementFormat.Float3),
@@ -65,8 +67,20 @@ public sealed class GltfPass : IRenderPass, IDisposable
             gd.MainSwapchain.Framebuffer,
             enableDepth: true,
             enableBlend: false,
-            extraLayouts: new[] { _cameraBuffer.Layout, _modelBuffer.Layout, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout }
+            extraLayouts: new[] { 
+                _cameraBuffer.Layout, 
+                _modelBuffer.Layout, 
+                PbrLayout.MaterialLayout, 
+                PbrLayout.MaterialParamsLayout,
+                _lightBuffer.Layout,
+                _lightBuffer.ParamLayout
+            }
         );
+    }
+
+    public void AddLight(LightUniform light)
+    {
+        _lightBuffer.AddLight(light);
     }
 
     public void LoadScene(SceneAsset scene)
@@ -142,9 +156,12 @@ public sealed class GltfPass : IRenderPass, IDisposable
             return;
 
         _cameraBuffer.Update(gd, camera);
+        _lightBuffer.UpdateGPU();
 
         cl.SetPipeline(_pipeline);
         cl.SetGraphicsResourceSet(0, _cameraBuffer.ResourceSet);
+        cl.SetGraphicsResourceSet(4, _lightBuffer.ResourceSet);
+        cl.SetGraphicsResourceSet(5, _lightBuffer.ParamResourceSet);
 
         for (int i = 0; i < _meshInstances.Count; i++)
         {
@@ -153,7 +170,6 @@ public sealed class GltfPass : IRenderPass, IDisposable
 
             cl.SetVertexBuffer(0, mesh.VertexBuffer);
             cl.SetIndexBuffer(mesh.IndexBuffer, IndexFormat.UInt32);
-            _modelBuffer.Bind(cl, instance.TransformIndex);
             cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
 
             var material = ResolveMaterial(instance.MaterialIndex);
@@ -169,7 +185,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
                     cl.SetGraphicsResourceSet(3, material.ParamsResourceSet);
                 }
             }
-            cl.DrawIndexed((uint)mesh.IndexCount, 1, 0, 0, 0);
+            cl.DrawIndexed((uint)mesh.IndexCount, 1, 0, 0, (uint)i);
         }
         
     }
@@ -425,6 +441,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
         ClearResources();
         _cameraBuffer.Dispose();
         _modelBuffer.Dispose();
+        _lightBuffer.Dispose();
         _pipeline.Dispose();
     }
 }

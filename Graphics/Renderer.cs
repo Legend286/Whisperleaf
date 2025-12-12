@@ -9,6 +9,7 @@ using Whisperleaf.Editor;
 using Whisperleaf.Graphics.Data;
 using Whisperleaf.Graphics.RenderPasses;
 using Whisperleaf.Graphics.Scene;
+using Whisperleaf.Graphics.Scene.Data;
 using Whisperleaf.Input;
 using Whisperleaf.Platform;
 
@@ -36,6 +37,17 @@ public class Renderer
         _gizmoOperation = _editorManager.GizmoOperation;
 
         _scenePass = new GltfPass(_window.graphicsDevice);
+
+        
+        _scenePass.AddLight(new LightUniform(
+                    position: new Vector3(-3,1,0),
+                    range: 30.0f,
+                    color: new Vector3(0.5f, 1.0f, 0.75f),
+                    intensity: 20.0f, type: LightType.Spot, innerCone: 40, outerCone: 60, direction: new Vector3(-1,0,1)));
+            
+        
+
+
         _passes.Add(_scenePass);
 
         _editorManager.SceneRequested += OnSceneRequested;
@@ -43,6 +55,8 @@ public class Renderer
     }
 
     public void AddPass(IRenderPass pass) => _passes.Add(pass);
+    
+    public void AddLight(LightUniform light) => _scenePass.AddLight(light);
 
     public void SetCamera(Camera camera)
     {
@@ -93,6 +107,7 @@ public class Renderer
 
             _cl.End();
             _window.graphicsDevice.SubmitCommands(_cl);
+            
             _window.graphicsDevice.SwapBuffers(_window.graphicsDevice.MainSwapchain);
         }
     }

@@ -32,6 +32,22 @@ layout(set = 3, binding = 0) uniform MaterialParams {
     int   padding1;
 };
 
+struct Light {
+    vec4 position; // w = range
+    vec4 color;    // w = intensity
+    vec4 direction;// w = type
+    vec4 params;   // x = innerCone, y = outerCone
+};
+
+layout(set = 4, binding = 0) readonly buffer LightData {
+    Light lights[];
+};
+
+layout(set = 5, binding = 0) uniform LightParams {
+    uint u_LightCount;
+    vec3 _padding;
+};
+
 const float PI = 3.14159265359;
 
 float D_GGX(float NdotH, float roughness)
@@ -90,12 +106,12 @@ void main()
     float metallic;
     float roughness;
     float ao;
-    
-        vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
-        ao        = rma.r;
-        roughness = clamp(rma.g, 0.04, 1.0);
-        metallic  = clamp(rma.b, 0.0, 1.0);
- 
+
+    vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
+    ao        = rma.r;
+    roughness = clamp(rma.g, 0.04, 1.0);
+    metallic  = clamp(rma.b, 0.0, 1.0);
+
 
     vec4 baseColor = baseTex;
     vec3 emissive  = emissiveT;
@@ -103,12 +119,58 @@ void main()
     vec3 N_ts = normalize(normalTex * 2.0 - 1.0);
     vec3 N = normalize(f_TBN * N_ts);
     vec3 V = normalize(u_CameraPos - f_WorldPos);
-    vec3 L = normalize(vec3(1.0, 8.0, -2.0) - f_WorldPos);
-    vec3 lightColor = vec3(1.0);
 
-    vec3 lighting = EvaluatePBR(N, V, L, baseColor.rgb, metallic, roughness, vec3(0.04), lightColor, 1.0);
+    vec3 lighting = vec3(0.0);
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, baseColor.rgb, metallic);
+
+    for (uint i = 0; i < u_LightCount; ++i)
+    {
+        Light light = lights[i];
+        vec3 L;
+        float attenuation = 1.0;
+        int type = int(light.direction.w);
+
+        if (type == 1)// Directional
+        {
+            L = normalize(-light.direction.xyz);
+        }
+        else // Point (0) or Spot (2)
+        {
+            vec3 lightVec = light.position.xyz - f_WorldPos;
+
+
+            float dist = length(lightVec);
+            L = normalize(lightVec);
+
+            float range = light.position.w;
+
+            float spotAttenuation = 1.0f;
+            if (type == 2)
+            {
+                L = normalize(lightVec);
+                vec3 D = normalize(light.direction.xyz);
+                float cosInner = cos(light.params.x);
+                float cosOuter = cos(light.params.y);
+                float cosTheta = dot(L, D);
+                spotAttenuation = clamp((cosTheta - cosOuter) / (cosInner - cosOuter), 0.0, 1.0);
+            }
+
+            // Attenuation: 1 / distance^2, but windowed by range
+            // Simple linear falloff for now or inverse square
+            float distSq = dist * dist;
+            attenuation = 1.0 / (1.0 + 0.1 * dist + 0.01 * distSq);// Basic attenuation
+            // Windowing
+            float window = max(0.0, 1.0 - pow(dist/range, 4.0));
+            attenuation *= spotAttenuation * window;
+        }
+
+        vec3 contribution = EvaluatePBR(N, V, L, baseColor.rgb, metallic, roughness, F0, light.color.rgb, light.color.w * attenuation);
+        lighting += contribution;
+    }
+
     vec3 ambient = baseColor.rgb * ao * 0.03;
-    vec3 finalColor =  lighting;
+    vec3 finalColor = lighting + ambient + emissive;
 
-    out_Color = vec4(vec3(1), baseColor.a);
+    out_Color = vec4(finalColor, baseColor.a);
 }
