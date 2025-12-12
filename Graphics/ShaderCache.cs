@@ -5,36 +5,32 @@ namespace Whisperleaf.Graphics
 {
     public static class ShaderCache
     {
-        private static readonly Dictionary<(string, string), Shader[]> _shaderPairs = new();
+        private static readonly Dictionary<(string, string), (byte[], byte[])> _shaderBytes = new();
 
-        public static Shader[] GetShaderPair(GraphicsDevice gd, string vertexPath, string fragmentPath)
+        public static (byte[] vsBytes, byte[] fsBytes) GetShaderBytes(string vertexPath, string fragmentPath)
         {
             var key = (vertexPath, fragmentPath);
-            if (_shaderPairs.TryGetValue(key, out var shaders))
-                return shaders;
+            if (_shaderBytes.TryGetValue(key, out var bytes))
+                return bytes;
 
-            string vertexCode = File.ReadAllText(vertexPath);
-            string fragmentCode = File.ReadAllText(fragmentPath);
+            byte[] vertexCode = File.ReadAllBytes(vertexPath);
+            byte[] fragmentCode = File.ReadAllBytes(fragmentPath); // ReadBytes is better than ReadAllText for potential binary spirv, but here we used ReadAllText before. Assuming source is GLSL/HLSL text or binary?
+            // Original used ReadAllText and Encoding.UTF8.GetBytes.
+            // Let's stick to that if it's text.
+            // Wait, previous code: File.ReadAllText -> GetBytes.
+            // Let's stick to that to be safe.
+            
+            vertexCode = System.Text.Encoding.UTF8.GetBytes(File.ReadAllText(vertexPath));
+            fragmentCode = System.Text.Encoding.UTF8.GetBytes(File.ReadAllText(fragmentPath));
 
-            shaders = gd.ResourceFactory.CreateFromSpirv(
-                new ShaderDescription(ShaderStages.Vertex, System.Text.Encoding.UTF8.GetBytes(vertexCode), "main"),
-                new ShaderDescription(ShaderStages.Fragment, System.Text.Encoding.UTF8.GetBytes(fragmentCode), "main")
-            );
-
-            _shaderPairs[key] = shaders;
-            return shaders;
+            var result = (vertexCode, fragmentCode);
+            _shaderBytes[key] = result;
+            return result;
         }
 
-        public static void DisposeAll()
+        public static void Clear()
         {
-            foreach (var pair in _shaderPairs.Values)
-            {
-                foreach (var shader in pair)
-                {
-                    shader.Dispose();
-                }
-            }
-            _shaderPairs.Clear();
+            _shaderBytes.Clear();
         }
     }
 }

@@ -7,6 +7,7 @@ namespace Whisperleaf.Graphics.Scene.Data
     public class CameraUniformBuffer : IDisposable
     {
         private readonly DeviceBuffer _buffer;
+        public DeviceBuffer Buffer => _buffer;
         private readonly ResourceLayout _layout;
         private readonly ResourceSet _resourceSet;
 

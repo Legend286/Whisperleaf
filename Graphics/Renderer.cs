@@ -31,12 +31,21 @@ public class Renderer
         _window = window;
         _cl = _window.graphicsDevice.ResourceFactory.CreateCommandList();
         PbrLayout.Initialize(_window.graphicsDevice);
-        _editorManager = new EditorManager(_window.graphicsDevice, _window.SdlWindow);
+        
+        _scenePass = new GltfPass(_window.graphicsDevice, (uint)_window.Width, (uint)_window.Height);
+        
+        _editorManager = new EditorManager(_window.graphicsDevice, _window.SdlWindow, _scenePass);
         _editorManager.SceneNodeSelected += OnSceneNodeSelected;
         _editorManager.GizmoOperationChanged += operation => _gizmoOperation = operation;
+        _editorManager.ViewportResized += size =>
+        {
+            if (_camera != null)
+            {
+                _camera.AspectRatio = size.X / size.Y;
+            }
+        };
+        _editorManager.ViewportWindow.OnDrawGizmo += DrawGizmo;
         _gizmoOperation = _editorManager.GizmoOperation;
-
-        _scenePass = new GltfPass(_window.graphicsDevice);
 
         
         _scenePass.AddLight(new LightUniform(
@@ -87,22 +96,22 @@ public class Renderer
         {
             Time.Update();
             
-            _cameraController?.Update(Time.DeltaTime);
+            _cameraController?.Update(Time.DeltaTime, _editorManager.ViewportWindow.IsHovered);
             var snapshot = _window.PumpEvents();
             InputManager.Update(snapshot);
             _editorManager.Update(Time.DeltaTime, snapshot);
             _cl.Begin();
             
-            _cl.SetFramebuffer(_window.graphicsDevice.MainSwapchain.Framebuffer);
-            _cl.ClearColorTarget(0, RgbaFloat.Black);
-            _cl.ClearDepthStencil(1.0f);
-            
             foreach (var pass in _passes)
             {
                 pass.Render(_window.graphicsDevice, _cl, _camera);
             }
+            
+            _cl.SetFramebuffer(_window.graphicsDevice.MainSwapchain.Framebuffer);
+            _cl.SetFullViewports();
+            _cl.ClearColorTarget(0, RgbaFloat.Black);
+            _cl.ClearDepthStencil(1.0f);
 
-            HandleGizmo();
             _editorManager.Render(_cl);
 
             _cl.End();
@@ -117,7 +126,7 @@ public class Renderer
         _selectedNode = node;
     }
 
-    private void HandleGizmo()
+    private void DrawGizmo()
     {
         if (_camera == null || _selectedNode == null)
         {
@@ -133,9 +142,9 @@ public class Renderer
         var projection = _camera.ProjectionMatrix;
 
         ImGuizmo.SetOrthographic(false);
-        var viewport = ImGui.GetMainViewport();
-       
-        ImGuizmo.SetRect(0,0,_window.Width, _window.Height);
+        ImGuizmo.SetDrawlist();
+        var v = _editorManager.ViewportWindow;
+        ImGuizmo.SetRect(v.ViewportPos.X, v.ViewportPos.Y, v.ViewportSize.X, v.ViewportSize.Y);
         ImGuizmo.Manipulate(ref view.M11, ref projection.M11, _gizmoOperation, MODE.WORLD, ref gizmoTransform.M11);
 
         if (ImGuizmo.IsUsing())

@@ -107,6 +107,7 @@ void main()
             io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
             io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard |
                 ImGuiConfigFlags.DockingEnable;
+            io.ConfigWindowsMoveFromTitleBarOnly = true;
             io.Fonts.Flags |= ImFontAtlasFlags.NoBakedLines;
 
             CreateDeviceResources(gd, outputDescription);
@@ -224,6 +225,28 @@ void main()
             }
 
             return GetOrCreateImGuiBinding(factory, textureView);
+        }
+
+        public void RemoveImGuiBinding(Texture texture)
+        {
+            if (_autoViewsByTexture.TryGetValue(texture, out TextureView textureView))
+            {
+                _autoViewsByTexture.Remove(texture);
+                _ownedResources.Remove(textureView);
+                _gd.DisposeWhenIdle(textureView);
+                RemoveImGuiBinding(textureView);
+            }
+        }
+
+        public void RemoveImGuiBinding(TextureView textureView)
+        {
+            if (_setsByView.TryGetValue(textureView, out ResourceSetInfo rsi))
+            {
+                _setsByView.Remove(textureView);
+                _viewsById.Remove(rsi.ImGuiBinding);
+                _ownedResources.Remove(rsi.ResourceSet);
+                _gd.DisposeWhenIdle(rsi.ResourceSet);
+            }
         }
 
         /// <summary>

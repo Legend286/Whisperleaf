@@ -1,0 +1,159 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+
+layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct CameraUniform
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    vec3 CameraPosition;
+    float _padding;
+};
+
+struct MeshInfoGPU
+{
+    uint VertexOffset;
+    uint IndexOffset;
+    uint IndexCount;
+    int MaterialIndex;
+    vec3 AABBMin;
+    uint _padding1; // Pad to 16 bytes
+    vec3 AABBMax;
+    uint _padding2; // Pad to 16 bytes
+    uint _padding3; // For 64-byte alignment
+    uint _padding4;
+    uint _padding5;
+    uint _padding6;
+};
+
+struct InstanceDataGPU
+{
+    mat4 WorldMatrix;
+    uint MeshInfoIndex;
+    uint _padding1;
+    uint _padding2;
+    uint _padding3;
+};
+
+struct IndirectDrawIndexedArguments
+{
+    uint IndexCount;
+    uint InstanceCount;
+    uint FirstIndex;
+    int VertexOffset;
+    uint FirstInstance;
+};
+
+layout(set = 0, binding = 0) uniform CameraBuffer
+{
+    CameraUniform camera;
+};
+
+layout(set = 0, binding = 1) readonly buffer MeshInfoStorage
+{
+    MeshInfoGPU meshInfos[];
+};
+
+layout(set = 0, binding = 2) readonly buffer InstanceDataStorage
+{
+    InstanceDataGPU instanceData[];
+};
+
+layout(set = 0, binding = 3) writeonly buffer IndirectDrawCommands
+{
+    IndirectDrawIndexedArguments indirectCommands[];
+};
+
+void main()
+{
+    uint instanceID = gl_GlobalInvocationID.x;
+
+    if (instanceID >= instanceData.length()) {
+        return;
+    }
+
+    InstanceDataGPU instance = instanceData[instanceID];
+    MeshInfoGPU mesh = meshInfos[instance.MeshInfoIndex];
+
+    // Compute World AABB
+    // Transform the 8 corners of the local AABB to world space
+    // and find the new min/max
+    vec3 minLocal = mesh.AABBMin;
+    vec3 maxLocal = mesh.AABBMax;
+
+    vec3 corners[8];
+    corners[0] = vec3(minLocal.x, minLocal.y, minLocal.z);
+    corners[1] = vec3(maxLocal.x, minLocal.y, minLocal.z);
+    corners[2] = vec3(minLocal.x, maxLocal.y, minLocal.z);
+    corners[3] = vec3(maxLocal.x, maxLocal.y, minLocal.z);
+    corners[4] = vec3(minLocal.x, minLocal.y, maxLocal.z);
+    corners[5] = vec3(maxLocal.x, minLocal.y, maxLocal.z);
+    corners[6] = vec3(minLocal.x, maxLocal.y, maxLocal.z);
+    corners[7] = vec3(maxLocal.x, maxLocal.y, maxLocal.z);
+
+    vec3 minWorld = vec3(1e38);
+    vec3 maxWorld = vec3(-1e38);
+
+    for (int i = 0; i < 8; i++) {
+        vec4 w = instance.WorldMatrix * vec4(corners[i], 1.0);
+        minWorld = min(minWorld, w.xyz);
+        maxWorld = max(maxWorld, w.xyz);
+    }
+    
+    // Extract Frustum Planes from ViewProjection
+    // Note: GLSL mat4 is column-major. If input is row-major (System.Numerics),
+    // then 'VP' here is transposed.
+    // VP[0] is Row0, VP[1] is Row1, etc.
+    mat4 VP = transpose(camera.ViewProjection);
+    
+    vec4 planes[6];
+    planes[0] = VP[3] + VP[0]; // Left
+    planes[1] = VP[3] - VP[0]; // Right
+    planes[2] = VP[3] + VP[1]; // Bottom
+    planes[3] = VP[3] - VP[1]; // Top
+    planes[4] = VP[3] + VP[2]; // Near
+    planes[5] = VP[3] - VP[2]; // Far
+
+    bool isVisible = true;
+    for (int i = 0; i < 6; i++)
+    {
+        vec4 plane = planes[i];
+        // Test the positive vertex (p-vertex) against the plane
+        vec3 p;
+        p.x = plane.x > 0 ? maxWorld.x : minWorld.x;
+        p.y = plane.y > 0 ? maxWorld.y : minWorld.y;
+        p.z = plane.z > 0 ? maxWorld.z : minWorld.z;
+        
+        // If p-vertex is outside (dist < 0), then box is outside
+        if (dot(plane.xyz, p) + plane.w < 0)
+        {
+            isVisible = false;
+            break;
+        }
+    }
+
+    if (isVisible)
+    {
+        IndirectDrawIndexedArguments cmd;
+        cmd.IndexCount = mesh.IndexCount;
+        cmd.InstanceCount = 1; 
+        cmd.FirstIndex = mesh.IndexOffset;
+        cmd.VertexOffset = int(mesh.VertexOffset);
+        cmd.FirstInstance = instanceID; 
+
+        indirectCommands[instanceID] = cmd;
+    }
+    else
+    {
+        IndirectDrawIndexedArguments cmd;
+        cmd.IndexCount = 0;
+        cmd.InstanceCount = 0;
+        cmd.FirstIndex = 0;
+        cmd.VertexOffset = 0;
+        cmd.FirstInstance = 0;
+        indirectCommands[instanceID] = cmd;
+    }
+}

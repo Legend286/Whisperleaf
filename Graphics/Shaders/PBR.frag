@@ -4,6 +4,7 @@ layout(location = 0) in vec3 f_WorldPos;
 layout(location = 1) in vec3 f_Normal;
 layout(location = 2) in vec2 f_UV;
 layout(location = 3) in mat3 f_TBN;
+layout(location = 6) flat in int f_MaterialIndex;
 
 layout(location = 0) out vec4 out_Color;
 
@@ -39,7 +40,7 @@ struct Light {
     vec4 params;   // x = innerCone, y = outerCone
 };
 
-layout(set = 4, binding = 0) readonly buffer LightData {
+layout(std430, set = 4, binding = 0) readonly buffer LightData {
     Light lights[];
 };
 
@@ -107,14 +108,31 @@ void main()
     float roughness;
     float ao;
 
-    vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
-    ao        = rma.r;
-    roughness = clamp(rma.g, 0.04, 1.0);
-    metallic  = clamp(rma.b, 0.0, 1.0);
+    if (u_UsePackedRMA != 0)
+    {
+        vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
+        ao        = rma.r;
+        roughness = rma.g;
+        metallic  = rma.b;
+    }
+    else
+    {
+        // Assume separate textures.
+        // Usually Metallic is B, Roughness is G in PBR pipelines, but if they are separate single-channel textures,
+        // they might be in R or simple scalar fetch.
+        // Let's assume they are standard textures where R contains the value.
+        metallic = texture(sampler2D(MetallicTex, MainSampler), f_UV).r;
+        roughness = texture(sampler2D(RoughnessTex, MainSampler), f_UV).r;
+        ao = texture(sampler2D(OcclusionTex, MainSampler), f_UV).r;
+    }
+
+    // Modulate by factors
+    metallic = clamp(metallic * u_MetallicFactor, 0.0, 1.0);
+    roughness = clamp(roughness * u_RoughnessFactor, 0.04, 1.0);
 
 
-    vec4 baseColor = baseTex;
-    vec3 emissive  = emissiveT;
+    vec4 baseColor = baseTex * u_BaseColorFactor;
+    vec3 emissive  = emissiveT * u_EmissiveFactor.rgb;
 
     vec3 N_ts = normalize(normalTex * 2.0 - 1.0);
     vec3 N = normalize(f_TBN * N_ts);

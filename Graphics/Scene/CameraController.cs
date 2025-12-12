@@ -20,29 +20,46 @@ public class CameraController
     }
     private bool skipNextDelta = false;
 
+    private bool _isActive = false;
+    private bool _wasRightDown = false;
     private bool initialCapture = true;
-    public void Update(float deltaTime)
+
+    public void Update(float deltaTime, bool allowStart)
     {
-        if (InputManager.IsButtonDown(MouseButton.Right))
+        bool rightDown = InputManager.IsButtonDown(MouseButton.Right);
+
+        if (rightDown && !_wasRightDown)
         {
-            _window.ShowCursor(false);
+            if (allowStart)
+            {
+                _isActive = true;
+                _window.ShowCursor(false);
+                initialCapture = true;
+            }
+        }
+        else if (!rightDown && _wasRightDown)
+        {
+            _isActive = false;
+            _window.ShowCursor(true);
+            initialCapture = true;
+        }
+
+        _wasRightDown = rightDown;
+
+        if (_isActive)
+        {
             int centerX = _window.Width / 2;
             int centerY = _window.Height / 2;
 
             if (initialCapture)
             {
-                _window.SetMousePosition(centerX, centerY);
+                lastMouse = InputManager.MousePosition;
                 initialCapture = false;
                 skipNextDelta = true;
             }
 
             HandleMovement(deltaTime);
             HandleMouse();
-        }
-        else
-        {
-            _window.ShowCursor(true);
-            initialCapture = true;
         }
     }
 
@@ -61,6 +78,7 @@ public class CameraController
     }
 
     private (int X, int Y) currentMouse = (0, 0);
+    private (int X, int Y) lastMouse = (0, 0);
     private void HandleMouse()
     {
         var mouseDelta = InputManager.MouseDelta;
@@ -76,8 +94,8 @@ public class CameraController
         int centerX = _window.Width / 2;
         int centerY = _window.Height / 2;
 
-        int dx = currentMouse.X - centerX;
-        int dy = currentMouse.Y - centerY;
+        int dx = currentMouse.X - lastMouse.X;
+        int dy = currentMouse.Y - lastMouse.Y;
 
         if (dx != 0 || dy != 0)
         {
@@ -86,7 +104,7 @@ public class CameraController
             _camera.Orientation = Quaternion.Normalize(yaw * pitch * _camera.Orientation);
 
             // reset cursor back to center
-            _window.SetMousePosition(centerX, centerY);
+            _window.SetMousePosition(lastMouse.X, lastMouse.Y);
         }
     }
 }
