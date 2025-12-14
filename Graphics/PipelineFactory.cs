@@ -17,12 +17,7 @@ public class PipelineFactory
     {
         var factory = gd.ResourceFactory;
         
-        var (vsBytes, fsBytes) = ShaderCache.GetShaderBytes(vertexPath, fragmentPath);
-        
-        Shader[] shaders = factory.CreateFromSpirv(
-            new ShaderDescription(ShaderStages.Vertex, vsBytes, "main"),
-            new ShaderDescription(ShaderStages.Fragment, fsBytes, "main")
-        );
+        Shader[] shaders = ShaderCache.GetShaderPair(gd, vertexPath, fragmentPath);
 
         ResourceLayout[] layouts = extraLayouts ?? System.Array.Empty<ResourceLayout>();
         
@@ -47,10 +42,6 @@ public class PipelineFactory
             ResourceBindingModel = ResourceBindingModel.Improved
         };
 
-        var pipeline = factory.CreateGraphicsPipeline(pd);
-        
-        foreach(var shader in shaders) shader.Dispose();
-        
-        return pipeline;
+        return factory.CreateGraphicsPipeline(pd);
     }
 }

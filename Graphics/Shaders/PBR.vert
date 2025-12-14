@@ -15,36 +15,8 @@ layout(set = 0, binding = 0) uniform CameraBuffer {
     vec3 u_CameraPos;
 };
 
-struct InstanceData {
-    mat4 WorldMatrix;
-    uint MeshInfoIndex;
-    uint padding1;
-    uint padding2;
-    uint padding3;
-};
-
-layout(std430, set = 1, binding = 0) readonly buffer InstanceDataStorage {
-    InstanceData instances[];
-};
-
-struct MeshInfoGPU
-{
-    uint VertexOffset;
-    uint IndexOffset;
-    uint IndexCount;
-    int MaterialIndex;
-    vec3 AABBMin;
-    uint _padding1; // Pad to 16 bytes
-    vec3 AABBMax;
-    uint _padding2; // Pad to 16 bytes
-    uint _padding3; // For 64-byte alignment
-    uint _padding4;
-    uint _padding5;
-    uint _padding6;
-};
-
-layout(std430, set = 1, binding = 1) readonly buffer MeshInfoStorage {
-    MeshInfoGPU meshInfos[];
+layout(std140, set = 1, binding = 0) buffer ModelTransforms {
+    mat4 u_Model[];
 };
 
 
@@ -53,17 +25,12 @@ layout(location = 0) out vec3 f_WorldPos;
 layout(location = 1) out vec3 f_Normal;
 layout(location = 2) out vec2 f_UV;
 layout(location = 3) out mat3 f_TBN;
-layout(location = 6) flat out int f_MaterialIndex;
 
 void main()
 {
     // World position
-    InstanceData instance = instances[gl_InstanceIndex];
-    vec4 worldPos = instance.WorldMatrix * vec4(v_Position, 1.0);
+    vec4 worldPos = u_Model[gl_InstanceIndex] * vec4(v_Position, 1.0);
     f_WorldPos = worldPos.xyz;
-    
-    // Pass Material Index
-    f_MaterialIndex = meshInfos[instance.MeshInfoIndex].MaterialIndex;
 
     // Normal (to world space)
     f_Normal = normalize(v_Normal);

@@ -1,6 +1,5 @@
 using System.Numerics;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Whisperleaf.Utilities.Serialization;
 
 namespace Whisperleaf.AssetPipeline.Scene;
@@ -61,9 +60,8 @@ public class SceneAsset
         }
     }
 
-    private static void FixupNode(SceneNode node, SceneNode? parent = null)
+    private static void FixupNode(SceneNode node)
     {
-        node.Parent = parent;
         if (IsZeroMatrix(node.LocalTransform))
         {
             node.LocalTransform = Matrix4x4.Identity;
@@ -71,7 +69,7 @@ public class SceneAsset
 
         foreach (var child in node.Children)
         {
-            FixupNode(child, node);
+            FixupNode(child);
         }
     }
 
@@ -104,28 +102,10 @@ public class SceneMetadata
 /// </summary>
 public class SceneNode
 {
-    private Matrix4x4 _localTransform = Matrix4x4.Identity;
-
     public string Name { get; set; } = string.Empty;
-    
-    public Matrix4x4 LocalTransform
-    {
-        get => _localTransform;
-        set
-        {
-            _localTransform = value;
-            IsDirty = true;
-        }
-    }
-
+    public Matrix4x4 LocalTransform { get; set; } = Matrix4x4.Identity;
     public MeshReference? Mesh { get; set; }
     public List<SceneNode> Children { get; set; } = new();
-
-    [JsonIgnore] public bool IsDirty { get; set; } = true;
-    [JsonIgnore] public Matrix4x4 WorldMatrix { get; set; } = Matrix4x4.Identity;
-    [JsonIgnore] public SceneNode? Parent { get; set; }
-    [JsonIgnore] public Vector3 WorldBoundMin { get; set; }
-    [JsonIgnore] public Vector3 WorldBoundMax { get; set; }
 
     /// <summary>
     /// Get all mesh nodes in this subtree (for rendering)
@@ -148,54 +128,6 @@ public class SceneNode
     public Matrix4x4 ComputeWorldTransform(Matrix4x4 parentTransform)
     {
         return LocalTransform * parentTransform;
-    }
-
-    public void UpdateWorld(Matrix4x4 parentWorld)
-    {
-        WorldMatrix = LocalTransform * parentWorld;
-        
-        if (Mesh != null)
-        {
-            CalculateWorldAABB();
-        }
-
-        IsDirty = false;
-
-        foreach (var child in Children)
-        {
-            child.UpdateWorld(WorldMatrix);
-        }
-    }
-
-    private void CalculateWorldAABB()
-    {
-        if (Mesh == null) return;
-
-        var min = Mesh.AABBMin;
-        var max = Mesh.AABBMax;
-
-        var corners = new Vector3[8];
-        corners[0] = new Vector3(min.X, min.Y, min.Z);
-        corners[1] = new Vector3(max.X, min.Y, min.Z);
-        corners[2] = new Vector3(min.X, max.Y, min.Z);
-        corners[3] = new Vector3(max.X, max.Y, min.Z);
-        corners[4] = new Vector3(min.X, min.Y, max.Z);
-        corners[5] = new Vector3(max.X, min.Y, max.Z);
-        corners[6] = new Vector3(min.X, max.Y, max.Z);
-        corners[7] = new Vector3(max.X, max.Y, max.Z);
-
-        var newMin = new Vector3(float.MaxValue);
-        var newMax = new Vector3(float.MinValue);
-
-        for (int i = 0; i < 8; i++)
-        {
-            var transformed = Vector3.Transform(corners[i], WorldMatrix);
-            newMin = Vector3.Min(newMin, transformed);
-            newMax = Vector3.Max(newMax, transformed);
-        }
-
-        WorldBoundMin = newMin;
-        WorldBoundMax = newMax;
     }
 }
 

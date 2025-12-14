@@ -30,7 +30,7 @@ public class Window
             ResourceBindingModel = ResourceBindingModel.Improved,
             SwapchainDepthFormat = PixelFormat.D32_Float_S8_UInt,
             SwapchainSrgbFormat = true,
-            SyncToVerticalBlank = false,
+            SyncToVerticalBlank = true,
         };
 
         Backend = GraphicsBackend.OpenGL;

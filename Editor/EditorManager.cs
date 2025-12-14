@@ -8,7 +8,6 @@ using Veldrid;
 using Veldrid.Sdl2;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor.Windows;
-using Whisperleaf.Graphics.RenderPasses;
 using Whisperleaf.Graphics.Scene;
 
 namespace Whisperleaf.Editor;
@@ -27,18 +26,16 @@ public class EditorManager : IDisposable
     private readonly SceneInspectorWindow _sceneInspector;
     private readonly ImportWizardWindow _importWizard;
     private readonly FileDialogWindow _fileDialog;
-    public readonly ViewportWindow ViewportWindow;
 
     private SceneAsset? _currentScene;
 
     public event Action<SceneAsset>? SceneRequested;
     public event Action<SceneNode?>? SceneNodeSelected;
     public event Action<OPERATION>? GizmoOperationChanged;
-    public event Action<Vector2>? ViewportResized;
 
     public OPERATION GizmoOperation { get; private set; } = OPERATION.TRANSLATE;
 
-    public EditorManager(GraphicsDevice gd, Sdl2Window window, GltfPass scenePass)
+    public EditorManager(GraphicsDevice gd, Sdl2Window window)
     {
         _gd = gd;
         _imguiController = new ImGuiController(
@@ -48,15 +45,11 @@ public class EditorManager : IDisposable
             window.Height);
 
         // Create editor windows
-        ViewportWindow = new ViewportWindow(scenePass, _imguiController, gd);
-        ViewportWindow.OnResize += size => ViewportResized?.Invoke(size);
-
         _assetBrowser = new AssetBrowserWindow();
         _sceneInspector = new SceneInspectorWindow();
         _importWizard = new ImportWizardWindow();
         _fileDialog = new FileDialogWindow();
 
-        _windows.Add(ViewportWindow);
         _windows.Add(_assetBrowser);
         _windows.Add(_sceneInspector);
         _windows.Add(_importWizard);
