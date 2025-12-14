@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using Veldrid;
 using Whisperleaf.AssetPipeline;
+using Whisperleaf.Graphics.Data;
 
 namespace Whisperleaf.Graphics.Assets
 {
@@ -13,33 +14,30 @@ namespace Whisperleaf.Graphics.Assets
 
     public class MeshGpu : IDisposable
     {
-        public DeviceBuffer VertexBuffer { get; }
-        public DeviceBuffer IndexBuffer { get; }
-        public int IndexCount { get; }
+        public MeshRange Range { get; }
+        private readonly GeometryBuffer _geometryBuffer;
+        
+        // These are removed as they are now in GeometryBuffer
+        // public DeviceBuffer VertexBuffer { get; }
+        // public DeviceBuffer IndexBuffer { get; }
+        
+        public int IndexCount => (int)Range.IndexCount;
         public Matrix4x4 WorldMatrix { get; }
         public int MaterialIndex { get; }
 
-        public MeshGpu(GraphicsDevice gd, MeshData mesh)
+        public MeshGpu(GeometryBuffer geometryBuffer, MeshData mesh)
         {
-            var factory = gd.ResourceFactory;
+            _geometryBuffer = geometryBuffer;
 
-            VertexBuffer = factory.CreateBuffer(new BufferDescription(
-                (uint)(mesh.Vertices.Length * sizeof(float)), BufferUsage.VertexBuffer));
-            gd.UpdateBuffer(VertexBuffer, 0, mesh.Vertices);
+            Range = geometryBuffer.Allocate(mesh.Vertices, mesh.Indices);
 
-            IndexBuffer = factory.CreateBuffer(new BufferDescription(
-                (uint)(mesh.Indices.Length * sizeof(uint)), BufferUsage.IndexBuffer));
-            gd.UpdateBuffer(IndexBuffer, 0, mesh.Indices);
-
-            IndexCount = mesh.Indices.Length;
-            WorldMatrix = mesh.WorldMatrix; // save Assimp world matrix
+            WorldMatrix = mesh.WorldMatrix; 
             MaterialIndex = mesh.MaterialIndex;
         }
 
         public void Dispose()
         {
-            VertexBuffer.Dispose();
-            IndexBuffer.Dispose();
+            _geometryBuffer.Free(Range);
         }
     }
 }

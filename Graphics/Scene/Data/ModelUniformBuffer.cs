@@ -77,6 +77,36 @@ namespace Whisperleaf.Graphics.Scene.Data
             _lastUploaded = transform;
         }
 
+        public void UpdateAll(ReadOnlySpan<ModelUniform> uniforms)
+        {
+            if (uniforms.Length > _transforms.Capacity)
+            {
+                // Resize logic if needed, or throw. 
+                // For now assuming capacity is managed externally or sufficient.
+            }
+            
+            _transforms.Clear();
+            _transforms.AddRange(uniforms.ToArray()); // Keep local cache in sync if needed
+            
+            _gd.UpdateBuffer(_buffer, 0, uniforms);
+        }
+
+        public void EnsureCapacity(int capacity)
+        {
+            if (_buffer.SizeInBytes < capacity * _stride)
+            {
+                _buffer.Dispose();
+                _buffer = _gd.ResourceFactory.CreateBuffer(new BufferDescription(
+                    (uint)(capacity * _stride), 
+                    BufferUsage.StructuredBufferReadWrite, 
+                    (uint)Marshal.SizeOf<ModelUniform>())); // StructureByteStride
+                
+                // Update ResourceSet
+                _resourceSet.Dispose();
+                _resourceSet = _gd.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _buffer));
+            }
+        }
+
         public void Clear()
         {
             _transforms.Clear();

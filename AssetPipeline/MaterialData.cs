@@ -46,6 +46,23 @@ namespace Whisperleaf.AssetPipeline
 
         public void Dispose()
         {
+            // 1. Dispose ResourceSets (descriptors) first, as they reference the views.
+            ResourceSet?.Dispose();
+            ParamsResourceSet?.Dispose();
+
+            // 2. Dispose TextureViews (VkImageView) before the Textures (VkImage).
+            //    Vulkan requirement: ImageView must be destroyed before the Image it points to.
+            BaseColorView?.Dispose();
+            MetallicView?.Dispose();
+            RoughnessView?.Dispose();
+            NormalView?.Dispose();
+            OcclusionView?.Dispose();
+            EmissiveView?.Dispose();
+
+            // 3. Dispose other buffers
+            ParamsBuffer?.Dispose();
+
+            // 4. Finally dispose Textures (VkImage).
             var disposedTextures = new HashSet<Texture?>();
 
             void DisposeTexture(Texture? tex)
@@ -62,16 +79,6 @@ namespace Whisperleaf.AssetPipeline
             DisposeTexture(NormalTex);
             DisposeTexture(OcclusionTex);
             DisposeTexture(EmissiveTex);
-
-            BaseColorView?.Dispose();
-            MetallicView?.Dispose();
-            RoughnessView?.Dispose();
-            NormalView?.Dispose();
-            OcclusionView?.Dispose();
-            EmissiveView?.Dispose();
-            ParamsBuffer?.Dispose();
-            ResourceSet?.Dispose();
-            ParamsResourceSet?.Dispose();
         }
     }
 }
