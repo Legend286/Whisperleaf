@@ -19,6 +19,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
     private readonly CameraUniformBuffer _cameraBuffer;
     private readonly ModelUniformBuffer _modelBuffer;
     private readonly LightUniformBuffer _lightBuffer;
+    private readonly GeometryBuffer _geometryBuffer;
 
     private readonly List<MeshGpu> _meshes = new();
     private readonly List<MaterialData> _materials = new();
@@ -28,11 +29,11 @@ public sealed class GltfPass : IRenderPass, IDisposable
     private readonly Dictionary<SceneNode, Matrix4x4> _nodeWorldTransforms = new();
     private bool _loggedFirstInstance;
 
-    private readonly struct MeshInstance
+    private struct MeshInstance
     {
         public readonly MeshGpu Mesh;
         public readonly int MaterialIndex;
-        public readonly int TransformIndex;
+        public readonly int TransformIndex; // Maps to SSBO index
         public readonly SceneNode Node;
 
         public MeshInstance(MeshGpu mesh, int materialIndex, int transformIndex, SceneNode node)
@@ -47,6 +48,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
     public GltfPass(GraphicsDevice gd)
     {
         _gd = gd;
+        _geometryBuffer = new GeometryBuffer(gd);
 
         _cameraBuffer = new CameraUniformBuffer(gd);
         _modelBuffer = new ModelUniformBuffer(gd);
@@ -85,10 +87,13 @@ public sealed class GltfPass : IRenderPass, IDisposable
 
     public void LoadScene(SceneAsset scene)
     {
+        _gd.WaitForIdle();
         ClearResources();
 
         LoadMaterials(scene);
         LoadMeshes(scene);
+        
+        SortAndUploadInstances();
     }
 
     public void LoadScene(string scenePath)
@@ -160,34 +165,85 @@ public sealed class GltfPass : IRenderPass, IDisposable
 
         cl.SetPipeline(_pipeline);
         cl.SetGraphicsResourceSet(0, _cameraBuffer.ResourceSet);
+        cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
         cl.SetGraphicsResourceSet(4, _lightBuffer.ResourceSet);
         cl.SetGraphicsResourceSet(5, _lightBuffer.ParamResourceSet);
 
-        for (int i = 0; i < _meshInstances.Count; i++)
+        // Bind global geometry buffers once
+        cl.SetVertexBuffer(0, _geometryBuffer.VertexBuffer);
+        cl.SetIndexBuffer(_geometryBuffer.IndexBuffer, IndexFormat.UInt32);
+
+        int start = 0;
+        while (start < _meshInstances.Count)
         {
-            var instance = _meshInstances[i];
-            var mesh = instance.Mesh;
+            var batchInstance = _meshInstances[start];
+            var batchMesh = batchInstance.Mesh;
+            int batchMaterialIndex = batchInstance.MaterialIndex;
 
-            cl.SetVertexBuffer(0, mesh.VertexBuffer);
-            cl.SetIndexBuffer(mesh.IndexBuffer, IndexFormat.UInt32);
-            cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
+            // Find batch size
+            int count = 1;
+            while (start + count < _meshInstances.Count)
+            {
+                var next = _meshInstances[start + count];
+                if (next.Mesh != batchMesh || next.MaterialIndex != batchMaterialIndex)
+                    break;
+                count++;
+            }
 
-            var material = ResolveMaterial(instance.MaterialIndex);
+            // Bind Material
+            var material = ResolveMaterial(batchMaterialIndex);
             if (material != null)
             {
-                if (material.ResourceSet != null)
-                {
-                    cl.SetGraphicsResourceSet(2, material.ResourceSet);
-                }
-
-                if (material.ParamsResourceSet != null)
-                {
-                    cl.SetGraphicsResourceSet(3, material.ParamsResourceSet);
-                }
+                if (material.ResourceSet != null) cl.SetGraphicsResourceSet(2, material.ResourceSet);
+                if (material.ParamsResourceSet != null) cl.SetGraphicsResourceSet(3, material.ParamsResourceSet);
             }
-            cl.DrawIndexed((uint)mesh.IndexCount, 1, 0, 0, (uint)i);
+
+            // Draw Instanced
+            // indexCount, instanceCount, indexStart, vertexOffset, instanceStart (firstInstance)
+            cl.DrawIndexed(
+                batchMesh.Range.IndexCount, 
+                (uint)count, 
+                batchMesh.Range.IndexStart, 
+                batchMesh.Range.VertexOffset, 
+                (uint)start); // start index corresponds to SSBO index because of SortAndUploadInstances
+
+            start += count;
         }
-        
+    }
+
+    private void SortAndUploadInstances()
+    {
+        if (_meshInstances.Count == 0) return;
+
+        // Sort: Material -> Mesh
+        _meshInstances.Sort((a, b) =>
+        {
+            int cmpMat = a.MaterialIndex.CompareTo(b.MaterialIndex);
+            if (cmpMat != 0) return cmpMat;
+            return a.Mesh.GetHashCode().CompareTo(b.Mesh.GetHashCode());
+        });
+
+        // Rebuild SSBO and update map
+        var uniforms = new ModelUniform[_meshInstances.Count];
+        _nodeToInstance.Clear();
+
+        for (int i = 0; i < _meshInstances.Count; i++)
+        {
+            var inst = _meshInstances[i];
+            
+            // Look up world transform
+            if (!_nodeWorldTransforms.TryGetValue(inst.Node, out var world))
+                world = Matrix4x4.Identity;
+
+            uniforms[i] = new ModelUniform(world);
+
+            // Update instance with new SSBO index
+            _meshInstances[i] = new MeshInstance(inst.Mesh, inst.MaterialIndex, i, inst.Node);
+            _nodeToInstance[inst.Node] = i;
+        }
+
+        _modelBuffer.EnsureCapacity(_meshInstances.Count);
+        _modelBuffer.UpdateAll(uniforms);
     }
 
     private void LoadMaterials(SceneAsset scene)
@@ -247,19 +303,17 @@ public sealed class GltfPass : IRenderPass, IDisposable
             if (TryLoadMesh(meshRef, out MeshGpu? meshGpu))
             {
                 var mesh = meshGpu!;
-                _meshes.Add(mesh);
+                _meshes.Add(mesh); // Track mesh for disposal
 
-                int transformIndex = _modelBuffer.Allocate(worldTransform);
-                int instanceIndex = _meshInstances.Count;
-                _meshInstances.Add(new MeshInstance(mesh, mesh.MaterialIndex, transformIndex, node));
-                _nodeToInstance[node] = instanceIndex;
+                // Add to instances list. TransformIndex will be assigned in SortAndUploadInstances
+                _meshInstances.Add(new MeshInstance(mesh, mesh.MaterialIndex, -1, node));
+                
+                // _nodeToInstance will be populated in SortAndUploadInstances
 
                 if (!_loggedFirstInstance)
                 {
                     _loggedFirstInstance = true;
                     LogInstanceDebug(node, node.LocalTransform, worldTransform);
-                    Console.WriteLine("[GltfPass] GPU buffer contains:");
-                    PrintMatrix(_modelBuffer.GetLastUploadedMatrix());
                 }
             }
         }
@@ -292,7 +346,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
             {
                 meshData.MaterialIndex = meshRef.MaterialIndex;
             }
-            meshGpu = new MeshGpu(_gd, meshData);
+            meshGpu = new MeshGpu(_geometryBuffer, meshData);
             return true;
         }
         catch (Exception ex)
@@ -301,7 +355,7 @@ public sealed class GltfPass : IRenderPass, IDisposable
             return false;
         }
     }
-
+    
     private MaterialData? ResolveMaterial(int index)
     {
         if (index >= 0 && index < _materials.Count)
@@ -353,15 +407,14 @@ public sealed class GltfPass : IRenderPass, IDisposable
 
         if (_nodeToInstance.TryGetValue(node, out var instanceIndex))
         {
-            var instance = _meshInstances[instanceIndex];
+            // Update SSBO directly
             if (IsDegenerateMatrix(worldTransform))
             {
-                Console.WriteLine($"[GltfPass] Warning: degenerate transform detected for node '{node.Name}', defaulting to identity.");
-                worldTransform = Matrix4x4.Identity;
-                _nodeWorldTransforms[node] = worldTransform;
+               worldTransform = Matrix4x4.Identity;
+               _nodeWorldTransforms[node] = worldTransform;
             }
 
-            _modelBuffer.UpdateTransform(instance.TransformIndex, worldTransform);
+            _modelBuffer.UpdateTransform(instanceIndex, worldTransform);
         }
 
         foreach (var child in node.Children)
@@ -378,62 +431,18 @@ public sealed class GltfPass : IRenderPass, IDisposable
                        matrix.M21 == 0f && matrix.M22 == 0f && matrix.M23 == 0f && matrix.M24 == 0f &&
                        matrix.M31 == 0f && matrix.M32 == 0f && matrix.M33 == 0f && matrix.M34 == 0f &&
                        matrix.M41 == 0f && matrix.M42 == 0f && matrix.M43 == 0f && matrix.M44 == 0f;
-        if (allZero)
-        {
-            return true;
-        }
+        if (allZero) return true;
 
-        if (!Matrix4x4.Decompose(matrix, out var scale, out _, out _))
-        {
-            return true;
-        }
+        if (!Matrix4x4.Decompose(matrix, out var scale, out _, out _)) return true;
 
-        if (Math.Abs(scale.X) < epsilon || Math.Abs(scale.Y) < epsilon || Math.Abs(scale.Z) < epsilon)
-        {
-            return true;
-        }
+        if (Math.Abs(scale.X) < epsilon || Math.Abs(scale.Y) < epsilon || Math.Abs(scale.Z) < epsilon) return true;
 
         return false;
     }
 
     private static void LogInstanceDebug(SceneNode node, Matrix4x4 local, Matrix4x4 world)
     {
-        Console.WriteLine($"[GltfPass] First mesh instance: '{node.Name}'");
-
-        if (Matrix4x4.Decompose(local, out var localScale, out var localRotation, out var localTranslation))
-        {
-            Console.WriteLine($"  Local  -> Position: {localTranslation}, Scale: {localScale}");
-        }
-        else
-        {
-            Console.WriteLine("  Local  -> Decompose failed");
-        }
-
-        if (Matrix4x4.Decompose(world, out var worldScale, out var worldRotation, out var worldTranslation))
-        {
-            Console.WriteLine($"  World  -> Position: {worldTranslation}, Scale: {worldScale}");
-        }
-        else
-        {
-            Console.WriteLine("  World  -> Decompose failed");
-        }
-
-        Console.WriteLine("  Local matrix:");
-        PrintMatrix(local);
-        Console.WriteLine("  World matrix:");
-        PrintMatrix(world);
-    }
-
-    private static void PrintMatrix(Matrix4x4 matrix)
-    {
-        Console.WriteLine(
-            $"    [{matrix.M11,8:F4} {matrix.M12,8:F4} {matrix.M13,8:F4} {matrix.M14,8:F4}]");
-        Console.WriteLine(
-            $"    [{matrix.M21,8:F4} {matrix.M22,8:F4} {matrix.M23,8:F4} {matrix.M24,8:F4}]");
-        Console.WriteLine(
-            $"    [{matrix.M31,8:F4} {matrix.M32,8:F4} {matrix.M33,8:F4} {matrix.M34,8:F4}]");
-        Console.WriteLine(
-            $"    [{matrix.M41,8:F4} {matrix.M42,8:F4} {matrix.M43,8:F4} {matrix.M44,8:F4}]");
+        // Debug logging... (kept minimal)
     }
 
     public void Dispose()
@@ -443,5 +452,6 @@ public sealed class GltfPass : IRenderPass, IDisposable
         _modelBuffer.Dispose();
         _lightBuffer.Dispose();
         _pipeline.Dispose();
+        _geometryBuffer.Dispose();
     }
 }
