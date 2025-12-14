@@ -150,7 +150,8 @@ public sealed class GltfPass : IRenderPass, IDisposable
         return true;
     }
 
-    public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null) {
+    public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null)
+    {
         if (camera == null || _meshInstances.Count == 0)
             return;
 
@@ -162,7 +163,8 @@ public sealed class GltfPass : IRenderPass, IDisposable
         cl.SetGraphicsResourceSet(4, _lightBuffer.ResourceSet);
         cl.SetGraphicsResourceSet(5, _lightBuffer.ParamResourceSet);
 
-        for (int i = 0; i < _meshInstances.Count; i++) {
+        for (int i = 0; i < _meshInstances.Count; i++)
+        {
             var instance = _meshInstances[i];
             var mesh = instance.Mesh;
 
@@ -171,21 +173,21 @@ public sealed class GltfPass : IRenderPass, IDisposable
             cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
 
             var material = ResolveMaterial(instance.MaterialIndex);
-
-            if (material != null) {
-                if (material.ResourceSet != null) {
+            if (material != null)
+            {
+                if (material.ResourceSet != null)
+                {
                     cl.SetGraphicsResourceSet(2, material.ResourceSet);
                 }
 
-
-                if (material.ParamsResourceSet != null) {
+                if (material.ParamsResourceSet != null)
+                {
                     cl.SetGraphicsResourceSet(3, material.ParamsResourceSet);
                 }
             }
-
-
             cl.DrawIndexed((uint)mesh.IndexCount, 1, 0, 0, (uint)i);
         }
+        
     }
 
     private void LoadMaterials(SceneAsset scene)
