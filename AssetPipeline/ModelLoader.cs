@@ -85,34 +85,20 @@ namespace Whisperleaf.Graphics.Loaders
                 materials.Add(m);
             }
 
-            // ----- Meshes (flattened from the node hierarchy)
+            // ----- Meshes (Direct 1:1 mapping)
             var meshes = new List<MeshData>(scene.MeshCount);
-            TraverseNode(scene, scene.RootNode, System.Numerics.Matrix4x4.CreateScale(100.0f), meshes);
+            for (int i = 0; i < scene.MeshCount; i++)
+            {
+                var am = scene.Meshes[i];
+                var mesh = BuildMesh(am);
+                mesh.WorldMatrix = System.Numerics.Matrix4x4.Identity; // Hierarchy handled by SceneImporter
+                meshes.Add(mesh);
+            }
 
             return (meshes, materials, scene);
         }
         
-        
-        private static void TraverseNode(Assimp.Scene scene, Node node, System.Numerics.Matrix4x4 parentTransform, List<MeshData> meshes)
-        {
-            // Combine parent transform with this node’s transform
-            System.Numerics.Matrix4x4 local = Maths.Interop.ToNumerics(node.Transform);
-            System.Numerics.Matrix4x4 world = local * parentTransform; // Assimp matrices are row-major, keep this order
-
-            // For each mesh attached to this node
-            foreach (int meshIndex in node.MeshIndices)
-            {
-                var am = scene.Meshes[meshIndex];
-
-                var mesh = BuildMesh(am);
-                mesh.WorldMatrix = world;
-                meshes.Add(mesh);
-            }
-
-            // Recurse into children
-            foreach (var child in node.Children)
-                TraverseNode(scene, child, world, meshes);
-        }
+        // TraverseNode removed as we don't flatten anymore
 
         private static MeshData BuildMesh(Assimp.Mesh am)
         {
