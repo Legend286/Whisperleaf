@@ -11,8 +11,9 @@ public class AssetBrowserWindow : EditorWindow
     private string _currentPath = "Resources/Scenes";
     private List<string> _sceneFiles = new();
     private string? _selectedFile;
+    private bool _additiveLoading = false;
 
-    public event Action<SceneAsset>? OnSceneSelected;
+    public event Action<SceneAsset, bool>? OnSceneSelected;
 
     public AssetBrowserWindow()
     {
@@ -27,6 +28,9 @@ public class AssetBrowserWindow : EditorWindow
         {
             RefreshAssets();
         }
+
+        ImGui.SameLine();
+        ImGui.Checkbox("Additive Loading", ref _additiveLoading);
 
         ImGui.SameLine();
         ImGui.Text($"Path: {_currentPath}");
@@ -92,7 +96,7 @@ public class AssetBrowserWindow : EditorWindow
         try
         {
             var scene = SceneAsset.Load(path);
-            OnSceneSelected?.Invoke(scene);
+            OnSceneSelected?.Invoke(scene, _additiveLoading);
         }
         catch (Exception ex)
         {

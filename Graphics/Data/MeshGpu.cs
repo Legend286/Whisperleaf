@@ -24,6 +24,8 @@ namespace Whisperleaf.Graphics.Assets
         public int IndexCount => (int)Range.IndexCount;
         public Matrix4x4 WorldMatrix { get; }
         public int MaterialIndex { get; }
+        public Vector3 AABBMin { get; }
+        public Vector3 AABBMax { get; }
 
         public MeshGpu(GeometryBuffer geometryBuffer, MeshData mesh)
         {
@@ -33,6 +35,8 @@ namespace Whisperleaf.Graphics.Assets
 
             WorldMatrix = mesh.WorldMatrix; 
             MaterialIndex = mesh.MaterialIndex;
+            AABBMin = mesh.AABBMin;
+            AABBMax = mesh.AABBMax;
         }
 
         public void Dispose()

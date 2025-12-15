@@ -26,6 +26,7 @@ public class Renderer
     private CameraController? _cameraController;
     private SceneNode? _selectedNode;
     private OPERATION _gizmoOperation;
+    private bool _wasUsingGizmo;
     public Renderer(Window window)
     {
         _window = window;
@@ -87,8 +88,16 @@ public class Renderer
         {
             Time.Update();
             
-            _cameraController?.Update(Time.DeltaTime);
             var snapshot = _window.PumpEvents();
+            if (!_window.Exists) break;
+
+            if (_window.SdlWindow.WindowState == WindowState.Minimized || _window.Width == 0 || _window.Height == 0)
+            {
+                System.Threading.Thread.Sleep(10);
+                continue;
+            }
+
+            _cameraController?.Update(Time.DeltaTime);
             InputManager.Update(snapshot);
             _editorManager.Update(Time.DeltaTime, snapshot);
             _cl.Begin();
@@ -101,6 +110,19 @@ public class Renderer
             {
                 pass.Render(_window.graphicsDevice, _cl, _camera);
             }
+
+            var stats = new Editor.RenderStats
+            {
+                DrawCalls = _scenePass.DrawCalls,
+                RenderedInstances = _scenePass.RenderedInstances,
+                RenderedTriangles = _scenePass.RenderedTriangles,
+                RenderedVertices = _scenePass.RenderedVertices,
+                SourceMeshes = _scenePass.SourceMeshes,
+                SourceVertices = _scenePass.SourceVertices,
+                SourceTriangles = _scenePass.SourceIndices / 3,
+                TotalInstances = _scenePass.TotalInstances
+            };
+            _editorManager.UpdateStats(stats);
 
             HandleGizmo();
             _editorManager.Render(_cl);
@@ -115,6 +137,7 @@ public class Renderer
     private void OnSceneNodeSelected(SceneNode? node)
     {
         _selectedNode = node;
+        _scenePass.SetSelectedNode(node);
     }
 
     private void HandleGizmo()
@@ -138,17 +161,23 @@ public class Renderer
         ImGuizmo.SetRect(0,0,_window.Width, _window.Height);
         ImGuizmo.Manipulate(ref view.M11, ref projection.M11, _gizmoOperation, MODE.WORLD, ref gizmoTransform.M11);
 
-        if (ImGuizmo.IsUsing())
+        bool isUsing = ImGuizmo.IsUsing();
+        if (isUsing)
         {
             _scenePass.ApplyWorldTransform(_selectedNode, gizmoTransform);
         }
+        else if (_wasUsingGizmo)
+        {
+            _scenePass.RebuildBVH();
+        }
+        _wasUsingGizmo = isUsing;
     }
 
-    private void OnSceneRequested(SceneAsset scene)
+    private void OnSceneRequested(SceneAsset scene, bool additive)
     {
         try
         {
-            _scenePass.LoadScene(scene);
+            _scenePass.LoadScene(scene, additive);
         }
         catch (Exception ex)
         {

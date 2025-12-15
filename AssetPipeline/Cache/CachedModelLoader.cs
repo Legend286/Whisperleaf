@@ -1,3 +1,4 @@
+using System.Numerics;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using Whisperleaf.Graphics.Loaders;
@@ -23,6 +24,12 @@ public static class CachedModelLoader
         var cachedMeshes = new List<MeshData>();
         foreach (var mesh in sourceMeshes)
         {
+            // Center the mesh geometry to improve instancing efficiency
+            // Two identical meshes at different locations will become identical after centering
+            Vector3 center = (mesh.AABBMin + mesh.AABBMax) * 0.5f;
+            ApplyCentering(mesh, center);
+            mesh.CenteringOffset = center;
+
             var meshHash = WlMeshFormat.ComputeHash(mesh);
 
             if (AssetCache.HasMesh(meshHash, out string meshPath))
@@ -30,6 +37,8 @@ public static class CachedModelLoader
                 var cached = WlMeshFormat.Read(meshPath, out _);
                 cached.Name = mesh.Name;
                 cached.WorldMatrix = mesh.WorldMatrix;
+                cached.CenteringOffset = center; // Pass the offset to the importer
+                cached.MaterialIndex = mesh.MaterialIndex; // Restore original material index
                 cachedMeshes.Add(cached);
             }
             else
@@ -63,6 +72,19 @@ public static class CachedModelLoader
         }
 
         return (cachedMeshes, cachedMaterials, scene);
+    }
+
+    private static void ApplyCentering(MeshData mesh, Vector3 offset)
+    {
+        for (int i = 0; i < mesh.Vertices.Length; i += 12)
+        {
+            mesh.Vertices[i] -= offset.X;
+            mesh.Vertices[i + 1] -= offset.Y;
+            mesh.Vertices[i + 2] -= offset.Z;
+        }
+
+        mesh.AABBMin -= offset;
+        mesh.AABBMax -= offset;
     }
 
     /// <summary>

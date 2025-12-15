@@ -1,0 +1,133 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform CameraBuffer {
+    mat4 u_View;
+    mat4 u_Proj;
+    mat4 u_ViewProj;
+    vec3 u_CameraPos;
+    float _padding;
+};
+
+layout(std140, set = 1, binding = 0) buffer ModelTransforms {
+    mat4 u_Model[];
+};
+
+struct BatchInfo {
+    uint InstanceStart; // Index in u_Model
+    uint InstanceCount;
+    uint VisibleOffset; // Start index in VisibleIndices
+    uint MeshIndex;     // Unused in shader
+    vec4 AABBMin;
+    vec4 AABBMax;
+};
+
+layout(std430, set = 2, binding = 0) readonly buffer BatchData {
+    BatchInfo batches[];
+};
+
+layout(std430, set = 2, binding = 1) readonly buffer InstanceBatchMap {
+    uint u_InstanceToBatch[];
+};
+
+struct DrawCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+};
+
+layout(std430, set = 3, binding = 0) buffer DrawCommands {
+    DrawCommand commands[];
+};
+
+layout(std430, set = 4, binding = 0) buffer VisibleInstances {
+    uint u_VisibleIndices[];
+};
+
+// Frustum extraction
+vec4 planes[6];
+
+void ExtractPlanes(mat4 M) {
+    // Left
+    planes[0] = row(M, 3) + row(M, 0);
+    // Right
+    planes[1] = row(M, 3) - row(M, 0);
+    // Bottom
+    planes[2] = row(M, 3) + row(M, 1);
+    // Top
+    planes[3] = row(M, 3) - row(M, 1);
+    // Near
+    planes[4] = row(M, 3) + row(M, 2);
+    // Far
+    planes[5] = row(M, 3) - row(M, 2);
+
+    for (int i = 0; i < 6; i++) {
+        planes[i] /= length(planes[i].xyz);
+    }
+}
+
+// Row access helper (GLSL matrices are column-major, but accessing row is needed for plane extraction)
+vec4 row(mat4 M, int i) {
+    return vec4(M[0][i], M[1][i], M[2][i], M[3][i]);
+}
+
+bool IsAABBVisible(vec3 min, vec3 max) {
+    // Check box against all 6 planes
+    for (int i = 0; i < 6; i++) {
+        vec3 p = min;
+        if (planes[i].x >= 0) p.x = max.x;
+        if (planes[i].y >= 0) p.y = max.y;
+        if (planes[i].z >= 0) p.z = max.z;
+
+        // If "positive" point is behind plane, box is outside
+        if (dot(planes[i].xyz, p) + planes[i].w < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    uint instanceID = gl_GlobalInvocationID.x;
+    
+    // Safety check (total instances usually passed via push constant or buffer size, but we can check batch map size?)
+    // Assuming dispatch is exact or guarded.
+    
+    uint batchID = u_InstanceToBatch[instanceID];
+    BatchInfo batch = batches[batchID];
+    
+    if (instanceID >= batch.InstanceStart + batch.InstanceCount) {
+        // Out of bounds (padding threads)
+        return;
+    }
+
+    // Get Model Matrix
+    mat4 model = u_Model[instanceID];
+
+    // Transform AABB to World Space
+    vec3 center = (batch.AABBMin.xyz + batch.AABBMax.xyz) * 0.5;
+    vec3 extents = (batch.AABBMax.xyz - batch.AABBMin.xyz) * 0.5;
+    
+    vec3 worldCenter = (model * vec4(center, 1.0)).xyz;
+    
+    // Transform extents (take abs of rotation matrix)
+    mat3 absModel = mat3(abs(model[0].xyz), abs(model[1].xyz), abs(model[2].xyz));
+    vec3 worldExtents = absModel * extents;
+
+    vec3 worldMin = worldCenter - worldExtents;
+    vec3 worldMax = worldCenter + worldExtents;
+
+    // Cull
+    ExtractPlanes(u_ViewProj);
+    
+    if (IsAABBVisible(worldMin, worldMax)) {
+        // Visible
+        uint count = atomicAdd(commands[batchID].instanceCount, 1);
+        
+        // Write index
+        u_VisibleIndices[batch.VisibleOffset + count] = instanceID;
+    }
+}

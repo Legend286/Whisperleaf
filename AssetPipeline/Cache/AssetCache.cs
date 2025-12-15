@@ -10,7 +10,6 @@ namespace Whisperleaf.AssetPipeline.Cache;
 public static class AssetCache
 {
     private static readonly string CacheRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".cache", "whisperleaf"
     );
 
@@ -99,7 +98,7 @@ public static class AssetCache
     public static bool HasMesh(string hash, out string path)
     {
         var registry = LoadRegistry();
-        if (registry.TryGetValue(hash, out var entry) && entry.Type == AssetType.Mesh)
+        if (registry.TryGetValue(hash, out var entry) && entry != null && entry.Type == AssetType.Mesh)
         {
             path = Path.Combine(MeshCacheDir, $"{hash}.wlmesh");
             return File.Exists(path);
@@ -115,7 +114,7 @@ public static class AssetCache
     public static bool HasTexture(string hash, out string path)
     {
         var registry = LoadRegistry();
-        if (registry.TryGetValue(hash, out var entry) && entry.Type == AssetType.Texture)
+        if (registry.TryGetValue(hash, out var entry) && entry != null && entry.Type == AssetType.Texture)
         {
             path = Path.Combine(TextureCacheDir, $"{hash}.wltex");
             return File.Exists(path);

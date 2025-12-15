@@ -109,12 +109,15 @@ void main()
 
     vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
     ao        = rma.r;
-    roughness = clamp(rma.g, 0.04, 1.0);
-    metallic  = clamp(rma.b, 0.0, 1.0);
+    roughness = rma.g * u_RoughnessFactor;
+    metallic  = rma.b * u_MetallicFactor;
+    
+    roughness = clamp(roughness, 0.04, 1.0);
+    metallic  = clamp(metallic, 0.0, 1.0);
 
 
-    vec4 baseColor = baseTex;
-    vec3 emissive  = emissiveT;
+    vec4 baseColor = baseTex * u_BaseColorFactor;
+    vec3 emissive  = emissiveT * u_EmissiveFactor.rgb;
 
     vec3 N_ts = normalize(normalTex * 2.0 - 1.0);
     vec3 N = normalize(f_TBN * N_ts);
@@ -166,7 +169,7 @@ void main()
         }
 
         vec3 contribution = EvaluatePBR(N, V, L, baseColor.rgb, metallic, roughness, F0, light.color.rgb, light.color.w * attenuation);
-        lighting += contribution;
+        lighting += contribution * dot(f_Normal, L);
     }
 
     vec3 ambient = baseColor.rgb * ao * 0.03;

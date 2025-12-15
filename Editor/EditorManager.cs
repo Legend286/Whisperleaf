@@ -29,7 +29,7 @@ public class EditorManager : IDisposable
 
     private SceneAsset? _currentScene;
 
-    public event Action<SceneAsset>? SceneRequested;
+    public event Action<SceneAsset, bool>? SceneRequested;
     public event Action<SceneNode?>? SceneNodeSelected;
     public event Action<OPERATION>? GizmoOperationChanged;
 
@@ -79,6 +79,11 @@ public class EditorManager : IDisposable
         {
             window.Draw();
         }
+    }
+
+    public void UpdateStats(RenderStats stats)
+    {
+        _sceneInspector.Stats = stats;
     }
 
     public void Render(CommandList cl)
@@ -210,7 +215,7 @@ public class EditorManager : IDisposable
             }
 
             var scene = SceneAsset.Load(path);
-            OnSceneLoaded(scene);
+            OnSceneLoaded(scene, false);
         }
         catch (Exception ex)
         {
@@ -236,11 +241,43 @@ public class EditorManager : IDisposable
         }
     }
 
-    private void OnSceneLoaded(SceneAsset scene)
+    private void OnSceneLoaded(SceneAsset scene, bool additive)
     {
-        _currentScene = scene;
-        _sceneInspector.SetScene(scene);
-        SceneRequested?.Invoke(scene);
+        if (additive && _currentScene != null)
+        {
+            // Wrap new scene roots for organizational clarity in Inspector
+            var wrapper = new SceneNode { Name = scene.Name };
+            wrapper.Children.AddRange(scene.RootNodes);
+            scene.RootNodes = new List<SceneNode> { wrapper };
+
+            // Notify Renderer (Passes unmodified indices)
+            SceneRequested?.Invoke(scene, true);
+
+            // Update local Inspector state (Merge)
+            int matOffset = _currentScene.Materials.Count;
+            _currentScene.Materials.AddRange(scene.Materials);
+
+            // Update indices in the NEW scene hierarchy
+            foreach (var node in wrapper.GetMeshNodes())
+            {
+                if (node.Mesh != null) node.Mesh.MaterialIndex += matOffset;
+            }
+
+            _currentScene.RootNodes.Add(wrapper);
+
+            // Update Metadata
+            _currentScene.Metadata.TotalMeshCount += scene.Metadata.TotalMeshCount;
+            _currentScene.Metadata.TotalVertexCount += scene.Metadata.TotalVertexCount;
+            _currentScene.Metadata.TotalTriangleCount += scene.Metadata.TotalTriangleCount;
+            _currentScene.Metadata.BoundsMin = Vector3.Min(_currentScene.Metadata.BoundsMin, scene.Metadata.BoundsMin);
+            _currentScene.Metadata.BoundsMax = Vector3.Max(_currentScene.Metadata.BoundsMax, scene.Metadata.BoundsMax);
+        }
+        else
+        {
+            _currentScene = scene;
+            _sceneInspector.SetScene(scene);
+            SceneRequested?.Invoke(scene, false);
+        }
     }
 
     private void OnImportComplete(SceneAsset scene)
@@ -248,7 +285,7 @@ public class EditorManager : IDisposable
         _currentScene = scene;
         _sceneInspector.SetScene(scene);
         _assetBrowser.IsOpen = true; // Refresh browser
-        SceneRequested?.Invoke(scene);
+        SceneRequested?.Invoke(scene, false);
     }
 
     public void Dispose()

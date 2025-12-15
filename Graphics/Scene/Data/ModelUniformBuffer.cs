@@ -15,6 +15,7 @@ namespace Whisperleaf.Graphics.Scene.Data
         private readonly uint _stride;
         private readonly List<ModelUniform> _transforms = new();
         private Matrix4x4 _lastUploaded = Matrix4x4.Identity;
+        private readonly List<IDisposable> _staleResources = new();
 
         public ModelUniformBuffer(GraphicsDevice gd, int initialCapacity = 32768)
         {
@@ -39,6 +40,8 @@ namespace Whisperleaf.Graphics.Scene.Data
 
         public int Allocate(Matrix4x4 transform)
         {
+            EnsureCapacity(_transforms.Count + 1);
+            
             var uniformMatrix = transform;
             var uniform = new ModelUniform(uniformMatrix);
             int index = _transforms.Count;
@@ -79,13 +82,17 @@ namespace Whisperleaf.Graphics.Scene.Data
 
         public void UpdateAll(ReadOnlySpan<ModelUniform> uniforms)
         {
-            if (uniforms.Length > _transforms.Capacity)
-            {
-                // Resize logic if needed, or throw. 
-                // For now assuming capacity is managed externally or sufficient.
-            }
-            
             _transforms.Clear();
+            if (uniforms.Length == 0) 
+            {
+                // Console.WriteLine("[ModelUniformBuffer] UpdateAll skipped (0 instances)");
+                return;
+            }
+
+            // Console.WriteLine($"[ModelUniformBuffer] Updating {uniforms.Length} instances");
+
+            EnsureCapacity(uniforms.Length);
+            
             _transforms.AddRange(uniforms.ToArray()); // Keep local cache in sync if needed
             
             _gd.UpdateBuffer(_buffer, 0, uniforms);
@@ -93,16 +100,20 @@ namespace Whisperleaf.Graphics.Scene.Data
 
         public void EnsureCapacity(int capacity)
         {
-            if (_buffer.SizeInBytes < capacity * _stride)
+            uint neededBytes = (uint)(capacity * _stride);
+            if (_buffer.SizeInBytes < neededBytes)
             {
-                _buffer.Dispose();
-                _buffer = _gd.ResourceFactory.CreateBuffer(new BufferDescription(
-                    (uint)(capacity * _stride), 
-                    BufferUsage.StructuredBufferReadWrite, 
-                    (uint)Marshal.SizeOf<ModelUniform>())); // StructureByteStride
+                uint newSize = Math.Max(neededBytes, (uint)(_buffer.SizeInBytes * 2));
                 
-                // Update ResourceSet
-                _resourceSet.Dispose();
+                // Defer disposal of old resources as they might be in use by a pending command buffer
+                _staleResources.Add(_buffer);
+                _staleResources.Add(_resourceSet);
+                
+                _buffer = _gd.ResourceFactory.CreateBuffer(new BufferDescription(
+                    newSize, 
+                    BufferUsage.StructuredBufferReadWrite, 
+                    _stride)); // StructureByteStride
+                
                 _resourceSet = _gd.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _buffer));
             }
         }
@@ -142,6 +153,12 @@ namespace Whisperleaf.Graphics.Scene.Data
             _buffer.Dispose();
             _layout.Dispose();
             _resourceSet.Dispose();
+            
+            foreach (var resource in _staleResources)
+            {
+                resource.Dispose();
+            }
+            _staleResources.Clear();
         }
     }
 }

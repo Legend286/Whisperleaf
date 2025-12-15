@@ -106,7 +106,7 @@ public static class SceneImporter
                 var node = new SceneNode
                 {
                     Name = string.IsNullOrEmpty(mesh.Name) ? $"Mesh_{meshIndex}" : mesh.Name,
-                    LocalTransform = localTransform,
+                    LocalTransform = Matrix4x4.CreateTranslation(mesh.CenteringOffset) * localTransform,
                     Mesh = new MeshReference
                     {
                         MeshHash = meshHash,

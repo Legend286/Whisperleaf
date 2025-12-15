@@ -12,4 +12,5 @@ public sealed class MeshData
     public Vector3 AABBMax;
     public Matrix4x4 WorldMatrix;
     public int MaterialIndex;
+    public Vector3 CenteringOffset;
 }

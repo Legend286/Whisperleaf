@@ -30,7 +30,7 @@ public class Window
             ResourceBindingModel = ResourceBindingModel.Improved,
             SwapchainDepthFormat = PixelFormat.D32_Float_S8_UInt,
             SwapchainSrgbFormat = true,
-            SyncToVerticalBlank = true,
+            SyncToVerticalBlank = false,
         };
 
         Backend = GraphicsBackend.OpenGL;
@@ -61,7 +61,10 @@ public class Window
 
     private void OnWindowResized()
     {
-        graphicsDevice.MainSwapchain.Resize((uint)sdlWindow.Width, (uint)sdlWindow.Height);
+        if (sdlWindow.Width > 0 && sdlWindow.Height > 0)
+        {
+            graphicsDevice.MainSwapchain.Resize((uint)sdlWindow.Width, (uint)sdlWindow.Height);
+        }
         WindowResized?.Invoke(sdlWindow.Width, sdlWindow.Height);
     }
 

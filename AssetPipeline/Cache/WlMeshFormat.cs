@@ -115,20 +115,18 @@ public static class WlMeshFormat
     /// </summary>
     public static string ComputeHash(MeshData mesh)
     {
-        // Hash: vertices + indices + material index
+        // Hash: vertices + indices
+        // Note: MaterialIndex is excluded to allow deduplication of identical geometry
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
 
         // Write vertex data
         foreach (float v in mesh.Vertices)
-            bw.Write(v);
+            bw.Write(Math.Round(v * 100));
 
         // Write index data
         foreach (uint i in mesh.Indices)
             bw.Write(i);
-
-        // Write material index
-        bw.Write(mesh.MaterialIndex);
 
         return AssetCache.ComputeHash(ms.ToArray());
     }

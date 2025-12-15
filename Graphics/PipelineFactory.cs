@@ -28,7 +28,7 @@ public class PipelineFactory
                 ? new DepthStencilStateDescription(true, true, ComparisonKind.LessEqual)
                 : new DepthStencilStateDescription(false, false, ComparisonKind.Always),
             RasterizerState = new RasterizerStateDescription(
-                FaceCullMode.None,
+                FaceCullMode.Front,
                 PolygonFillMode.Solid,
                 FrontFace.Clockwise,
                 depthClipEnabled: true,

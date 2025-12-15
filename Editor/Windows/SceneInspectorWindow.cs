@@ -15,6 +15,8 @@ public class SceneInspectorWindow : EditorWindow
     private SceneNode? _selectedNode;
     private OPERATION _gizmoOperation = OPERATION.TRANSLATE;
 
+    public RenderStats Stats;
+
     public event Action<SceneNode?>? NodeSelected;
     public event Action<OPERATION>? GizmoOperationChanged;
 
@@ -47,12 +49,31 @@ public class SceneInspectorWindow : EditorWindow
             ImGui.Text($"Source: {Path.GetFileName(_currentScene.SourceFile)}");
             ImGui.Separator();
 
-            var meta = _currentScene.Metadata;
-            ImGui.Text($"Meshes: {meta.TotalMeshCount}");
-            ImGui.Text($"Vertices: {meta.TotalVertexCount:N0}");
-            ImGui.Text($"Triangles: {meta.TotalTriangleCount:N0}");
-            ImGui.Separator();
+            // Rendering Stats
+            ImGui.Text("Rendering Performance:");
+            ImGui.Text($"  Draw Calls: {Stats.DrawCalls}");
+            ImGui.Text($"  Instances: {Stats.RenderedInstances} / {Stats.TotalInstances}");
+            
+            float instReduction = 100.0f * (1.0f - (float)Stats.DrawCalls / Math.Max(1, Stats.RenderedInstances));
+            ImGui.Text($"  Batching Efficiency: {instReduction:F1}%");
 
+            ImGui.Separator();
+            ImGui.Text("Geometry:");
+            ImGui.Text($"  Triangles: {Stats.RenderedTriangles:N0} (Instanced)");
+            ImGui.Text($"  Vertices:  {Stats.RenderedVertices:N0} (Instanced)");
+            
+            ImGui.Separator();
+            ImGui.Text("Source Assets (Unique):");
+            ImGui.Text($"  Meshes:    {Stats.SourceMeshes}");
+            ImGui.Text($"  Vertices:  {Stats.SourceVertices:N0}");
+            // ImGui.Text($"  Triangles: {Stats.SourceTriangles:N0}"); // We didn't track source triangles, only indices/vertices. Indices/3 approx.
+            
+            ImGui.Separator();
+            
+            var meta = _currentScene.Metadata;
+            // ImGui.Text($"Meshes: {meta.TotalMeshCount}"); // Metadata might be outdated vs runtime unique cache?
+            // Keep metadata display as reference
+            
             ImGui.Text($"Bounds: {meta.BoundsSize.X:F2} x {meta.BoundsSize.Y:F2} x {meta.BoundsSize.Z:F2}");
             ImGui.Text($"Scale: {meta.ScaleFactor}");
         }

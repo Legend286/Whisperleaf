@@ -49,6 +49,8 @@ public class SceneAsset
             PropertyNameCaseInsensitive = true
         };
         options.Converters.Add(new Matrix4x4JsonConverter());
+        options.Converters.Add(new Vector3JsonConverter());
+        options.Converters.Add(new Vector4JsonConverter());
         return options;
     }
 
