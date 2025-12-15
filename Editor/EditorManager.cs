@@ -34,6 +34,9 @@ public class EditorManager : IDisposable
     public event Action<OPERATION>? GizmoOperationChanged;
 
     public OPERATION GizmoOperation { get; private set; } = OPERATION.TRANSLATE;
+    
+    public bool ShowBVH { get; set; }
+    public bool ShowSelection { get; set; } = true;
 
     public EditorManager(GraphicsDevice gd, Sdl2Window window)
     {
@@ -138,6 +141,15 @@ public class EditorManager : IDisposable
                 if (ImGui.MenuItem("Scene Inspector", null, ref sceneInspectorOpen))
                     _sceneInspector.IsOpen = sceneInspectorOpen;
 
+                ImGui.EndMenu();
+            }
+            
+            if (ImGui.BeginMenu("View"))
+            {
+                bool showBvh = ShowBVH;
+                bool showSel = ShowSelection;
+                if (ImGui.MenuItem("Show BVH", null, ref showBvh)) ShowBVH = showBvh;
+                if (ImGui.MenuItem("Show Selection", null, ref showSel)) ShowSelection = showSel;
                 ImGui.EndMenu();
             }
 

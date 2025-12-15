@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using Veldrid;
+using Whisperleaf.Graphics.Immediate;
 
 namespace Whisperleaf.Graphics.Scene;
 
@@ -91,6 +93,16 @@ public class SceneBVH
         }
 
         return nodeIndex;
+    }
+
+    public void DrawDebug(ImmediateRenderer renderer)
+    {
+        for (int i = 0; i < _nodeCount; i++)
+        {
+            var node = _nodes[i];
+            RgbaFloat color = node.Left == -1 ? RgbaFloat.Green : RgbaFloat.Grey;
+            renderer.DrawAABB(node.Min, node.Max, color);
+        }
     }
 
     public List<int> Query(Frustum frustum)

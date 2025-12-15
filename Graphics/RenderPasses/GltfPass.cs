@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Veldrid;
 using Whisperleaf.AssetPipeline;
 using Whisperleaf.AssetPipeline.Cache;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Graphics.Assets;
 using Whisperleaf.Graphics.Data;
+using Whisperleaf.Graphics.Immediate; // Added
 using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Graphics.Scene.Data;
 
@@ -82,6 +84,48 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             }
             return (new Vector3(-100000), new Vector3(100000));
         });
+    }
+
+    public void DrawDebug(ImmediateRenderer renderer, bool showBVH, bool showSelection)
+    {
+        if (showBVH)
+        {
+            _bvh.DrawDebug(renderer);
+        }
+
+        if (showSelection && _selectedNode != null)
+        {
+            if (_nodeToInstance.TryGetValue(_selectedNode, out int index))
+            {
+                var inst = _meshInstances[index];
+                if (_nodeWorldTransforms.TryGetValue(_selectedNode, out var world))
+                {
+                    var (min, max) = GetWorldAABB(inst.Mesh, world);
+                    renderer.DrawAABB(min, max, RgbaFloat.Yellow);
+                }
+            }
+        }
+    }
+
+    private (Vector3 Min, Vector3 Max) GetWorldAABB(MeshGpu mesh, Matrix4x4 world)
+    {
+        var center = (mesh.AABBMin + mesh.AABBMax) * 0.5f;
+        var extents = (mesh.AABBMax - mesh.AABBMin) * 0.5f;
+        
+        var worldCenter = Vector3.Transform(center, world);
+        
+        var absM11 = Math.Abs(world.M11); var absM12 = Math.Abs(world.M12); var absM13 = Math.Abs(world.M13);
+        var absM21 = Math.Abs(world.M21); var absM22 = Math.Abs(world.M22); var absM23 = Math.Abs(world.M23);
+        var absM31 = Math.Abs(world.M31); var absM32 = Math.Abs(world.M32); var absM33 = Math.Abs(world.M33);
+        
+        float newEx = absM11 * extents.X + absM21 * extents.Y + absM31 * extents.Z;
+        float newEy = absM12 * extents.X + absM22 * extents.Y + absM32 * extents.Z;
+        float newEz = absM13 * extents.X + absM23 * extents.Y + absM33 * extents.Z;
+        
+        var worldMin = new Vector3(worldCenter.X - newEx, worldCenter.Y - newEy, worldCenter.Z - newEz);
+        var worldMax = new Vector3(worldCenter.X + newEx, worldCenter.Y + newEy, worldCenter.Z + newEz);
+        
+        return (worldMin, worldMax);
     }
 
     private struct MeshInstance {

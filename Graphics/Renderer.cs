@@ -7,6 +7,7 @@ using Veldrid;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor;
 using Whisperleaf.Graphics.Data;
+using Whisperleaf.Graphics.Immediate; // Added
 using Whisperleaf.Graphics.RenderPasses;
 using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Graphics.Scene.Data;
@@ -22,6 +23,11 @@ public class Renderer
     private readonly List<IRenderPass> _passes = new();
     private readonly EditorManager _editorManager;
     private readonly GltfPass _scenePass;
+    private readonly ImmediateRenderer _immediateRenderer;
+    
+    public bool ShowBVH { get; set; }
+    public bool ShowSelectionBounds { get; set; } = true;
+    
     private Camera? _camera;
     private CameraController? _cameraController;
     private SceneNode? _selectedNode;
@@ -38,6 +44,7 @@ public class Renderer
         _gizmoOperation = _editorManager.GizmoOperation;
 
         _scenePass = new GltfPass(_window.graphicsDevice);
+        _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice);
 
         
         _scenePass.AddLight(new LightUniform(
@@ -124,6 +131,9 @@ public class Renderer
             };
             _editorManager.UpdateStats(stats);
 
+            _scenePass.DrawDebug(_immediateRenderer, _editorManager.ShowBVH, _editorManager.ShowSelection);
+            if (_camera != null) _immediateRenderer.Render(_cl, _camera);
+
             HandleGizmo();
             _editorManager.Render(_cl);
 
@@ -183,5 +193,12 @@ public class Renderer
         {
             Console.WriteLine($"Renderer failed to load scene: {ex.Message}");
         }
+    }
+    
+    public void Dispose()
+    {
+        _scenePass.Dispose();
+        _immediateRenderer.Dispose();
+        _editorManager.Dispose();
     }
 }
