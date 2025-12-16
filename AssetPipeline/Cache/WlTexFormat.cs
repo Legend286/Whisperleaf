@@ -127,7 +127,7 @@ public static class WlTexFormat
             throw new InvalidDataException($"Unsupported .wltex version: {version}");
 
         // Skip to pixel data
-        br.BaseStream.Seek(thumbnailOffset - dataSize, SeekOrigin.Current); // Seek past thumbnail and hash padding
+        br.BaseStream.Seek(thumbnailOffset - dataSize, SeekOrigin.Begin); // Seek to start of pixel data
 
         // Read pixel data
         byte[] pixels = br.ReadBytes((int)dataSize);

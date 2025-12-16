@@ -15,10 +15,21 @@ public static class CachedModelLoader
     /// Load model from glTF file with caching
     /// Returns cached assets if available, otherwise processes and caches them
     /// </summary>
-    public static (List<MeshData> meshes, List<MaterialData> materials, Assimp.Scene scene) Load(string path)
+    public static (List<MeshData> meshes, List<MaterialData> materials, Assimp.Scene scene) Load(string path, string sceneName)
     {
         // Always load the source file with Assimp to get the scene structure
         var (sourceMeshes, sourceMaterials, scene) = AssimpLoader.LoadCPU(path);
+
+        // Build a map of material index to the first mesh that uses it, for texture organization
+        var materialToMeshMap = new Dictionary<int, string>();
+        for (int i = 0; i < sourceMeshes.Count; i++)
+        {
+            var mesh = sourceMeshes[i];
+            if (!materialToMeshMap.ContainsKey(mesh.MaterialIndex))
+            {
+                materialToMeshMap[mesh.MaterialIndex] = string.IsNullOrWhiteSpace(mesh.Name) ? $"mesh_{i}" : mesh.Name;
+            }
+        }
 
         // Process meshes (check cache or process)
         var cachedMeshes = new List<MeshData>();
@@ -48,7 +59,7 @@ public static class CachedModelLoader
                     VertexCount = mesh.Vertices.Length / 12,
                     IndexCount = mesh.Indices.Length,
                     MaterialIndex = mesh.MaterialIndex
-                });
+                }, sceneName, mesh.Name);
 
                 WlMeshFormat.Write(meshPath, mesh, meshHash);
                 cachedMeshes.Add(mesh);
@@ -57,13 +68,16 @@ public static class CachedModelLoader
 
         // Process materials (check cache or process)
         var cachedMaterials = new List<MaterialData>();
-        foreach (var mat in sourceMaterials)
+        for (int i = 0; i < sourceMaterials.Count; i++)
         {
-            mat.BaseColorPath = ProcessTexture(mat.BaseColorPath, TextureType.BaseColor, scene);
-            mat.NormalPath = ProcessTexture(mat.NormalPath, TextureType.Normal, scene);
-            mat.EmissivePath = ProcessTexture(mat.EmissivePath, TextureType.Emissive, scene);
+            var mat = sourceMaterials[i];
+            string owningMeshName = materialToMeshMap.TryGetValue(i, out string? name) ? name : "unassigned_material";
 
-            mat.MetallicPath = ProcessRMATexture(mat.RoughnessPath, mat.MetallicPath, mat.OcclusionPath, scene);
+            (mat.BaseColorPath, mat.BaseColorHash) = ProcessTexture(mat.BaseColorPath, TextureType.BaseColor, scene, sceneName, owningMeshName);
+            (mat.NormalPath, mat.NormalHash) = ProcessTexture(mat.NormalPath, TextureType.Normal, scene, sceneName, owningMeshName);
+            (mat.EmissivePath, mat.EmissiveHash) = ProcessTexture(mat.EmissivePath, TextureType.Emissive, scene, sceneName, owningMeshName);
+
+            (mat.MetallicPath, mat.RMAHash) = ProcessRMATexture(mat.RoughnessPath, mat.MetallicPath, mat.OcclusionPath, scene, sceneName, owningMeshName);
             mat.RoughnessTex = null;
             mat.OcclusionPath = null;
             mat.UsePackedRMA = true;
@@ -90,55 +104,85 @@ public static class CachedModelLoader
     /// <summary>
     /// Process a single texture (check cache or compress and cache)
     /// </summary>
-    private static string? ProcessTexture(string? sourcePath, TextureType textureType, Assimp.Scene? scene)
+    private static (string? path, string? hash) ProcessTexture(string? sourcePath, TextureType textureType, Assimp.Scene? scene, string sceneName, string meshName)
     {
         if (string.IsNullOrWhiteSpace(sourcePath))
-            return null;
+        {
+            // Console.WriteLine($"[CachedModelLoader] Skipping {textureType} for {meshName}: source path is empty");
+            return (null, null);
+        }
 
         Image<Rgba32>? sourceImage = LoadSourceImage(sourcePath, scene);
         if (sourceImage == null)
-            return null;
+        {
+            Console.WriteLine($"[CachedModelLoader] ERROR: Failed to load source image for {textureType} (Path: {sourcePath})");
+            return (null, null);
+        }
 
         using (sourceImage)
         {
             var hash = WlTexFormat.ComputeHash(sourceImage);
 
             if (AssetCache.HasTexture(hash, out string cachedPath))
-                return cachedPath;
+            {
+               // Console.WriteLine($"[CachedModelLoader] Found cached {textureType}: {cachedPath}");
+                return (cachedPath, hash);
+            }
 
+            string friendlyName = GetFriendlyTextureName(sourcePath, textureType);
+            
             cachedPath = AssetCache.RegisterTexture(hash, new TextureCacheMetadata
             {
                 Width = sourceImage.Width,
                 Height = sourceImage.Height,
                 TextureType = textureType
-            });
+            }, sceneName, meshName, friendlyName);
 
             WlTexFormat.Write(cachedPath, sourceImage, textureType, hash);
-            return cachedPath;
+            Console.WriteLine($"[CachedModelLoader] Saved {textureType}: {cachedPath}");
+            return (cachedPath, hash);
         }
+    }
+
+    private static string GetFriendlyTextureName(string sourcePath, TextureType type)
+    {
+        if (sourcePath.StartsWith("*"))
+        {
+            return $"embedded_{sourcePath.TrimStart('*')}_{type}";
+        }
+        return Path.GetFileNameWithoutExtension(sourcePath);
     }
 
     /// <summary>
     /// Process RMA textures: pack separate channels or use packed texture
     /// Returns path to cached RMA texture
     /// </summary>
-    private static string? ProcessRMATexture(string? roughnessPath, string? metallicPath, string? aoPath, Assimp.Scene? scene)
+    private static (string? path, string? hash) ProcessRMATexture(string? roughnessPath, string? metallicPath, string? aoPath, Assimp.Scene? scene, string sceneName, string meshName)
     {
         using var packedRMA = RMATexturePacker.PackFromPaths(roughnessPath, metallicPath, aoPath, scene);
         var hash = RMATexturePacker.ComputeRMAHash(packedRMA);
 
         if (AssetCache.HasTexture(hash, out string cachedPath))
-            return cachedPath;
+        {
+           // Console.WriteLine($"[CachedModelLoader] Found cached RMA: {cachedPath}");
+            return (cachedPath, hash);
+        }
 
+        // Try to get a friendly name from one of the source components
+        string friendlyName = "rma_packed";
+        if (!string.IsNullOrEmpty(metallicPath)) friendlyName = Path.GetFileNameWithoutExtension(metallicPath) + "_rma";
+        else if (!string.IsNullOrEmpty(roughnessPath)) friendlyName = Path.GetFileNameWithoutExtension(roughnessPath) + "_rma";
+        
         cachedPath = AssetCache.RegisterTexture(hash, new TextureCacheMetadata
         {
             Width = packedRMA.Width,
             Height = packedRMA.Height,
             TextureType = TextureType.RMA
-        });
+        }, sceneName, meshName, friendlyName);
 
         WlTexFormat.Write(cachedPath, packedRMA, TextureType.RMA, hash);
-        return cachedPath;
+        Console.WriteLine($"[CachedModelLoader] Saved RMA: {cachedPath}");
+        return (cachedPath, hash);
     }
 
     /// <summary>

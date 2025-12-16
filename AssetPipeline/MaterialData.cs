@@ -23,6 +23,12 @@ namespace Whisperleaf.AssetPipeline
         public string? OcclusionPath;
         public string? EmissivePath;
 
+        // Texture Hashes (for cache lookup)
+        public string? BaseColorHash;
+        public string? NormalHash;
+        public string? EmissiveHash;
+        public string? RMAHash;
+
         // GPU resources
         public Texture? BaseColorTex;
         public TextureView? BaseColorView;

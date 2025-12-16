@@ -152,7 +152,7 @@ void main()
             if (type == 2)
             {
                 L = normalize(lightVec);
-                vec3 D = normalize(light.direction.xyz);
+                vec3 D = normalize(-light.direction.xyz);
                 float cosInner = cos(light.params.x);
                 float cosOuter = cos(light.params.y);
                 float cosTheta = dot(L, D);
@@ -169,7 +169,7 @@ void main()
         }
 
         vec3 contribution = EvaluatePBR(N, V, L, baseColor.rgb, metallic, roughness, F0, light.color.rgb, light.color.w * attenuation);
-        lighting += contribution * dot(f_Normal, L);
+        lighting += contribution;
     }
 
     vec3 ambient = baseColor.rgb * ao * 0.03;

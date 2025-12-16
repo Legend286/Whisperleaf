@@ -32,6 +32,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private readonly Dictionary<SceneNode, Matrix4x4> _nodeWorldTransforms = new();
     private bool _loggedFirstInstance;
     private readonly List<ModelUniform> _visibleTransforms = new();
+    private readonly List<SceneNode> _lightNodes = new();
+    private readonly List<LightUniform> _manualLights = new();
     private SceneNode? _selectedNode;
     
     // Statistics
@@ -39,11 +41,15 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     public int RenderedInstances { get; private set; }
     public long RenderedTriangles { get; private set; }
     public long RenderedVertices { get; private set; }
+    public SceneBVH.BVHStats CullingStats { get; private set; }
+    public int UniqueMaterialCount => _materials.Count;
     
     public int TotalInstances => _meshInstances.Count;
     public int SourceMeshes => _meshCache.Count;
     public long SourceVertices { get; private set; }
     public long SourceIndices { get; private set; }
+    public long TotalSceneTriangles { get; private set; }
+    public bool IsGizmoActive { get; set; }
 
     public void SetSelectedNode(SceneNode? node) {
         _selectedNode = node;
@@ -102,6 +108,35 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 {
                     var (min, max) = GetWorldAABB(inst.Mesh, world);
                     renderer.DrawAABB(min, max, RgbaFloat.Yellow);
+                }
+            }
+            // Draw selection box for light nodes (which might not have mesh instances)
+            else if (_selectedNode.Light != null && _nodeWorldTransforms.TryGetValue(_selectedNode, out var world))
+            {
+                var pos = world.Translation;
+                renderer.DrawAABB(pos - new Vector3(0.5f), pos + new Vector3(0.5f), RgbaFloat.Yellow);
+            }
+        }
+
+        // Draw light icons/gizmos
+        foreach (var node in _lightNodes)
+        {
+            if (_nodeWorldTransforms.TryGetValue(node, out var world))
+            {
+                var pos = world.Translation;
+                var color = new RgbaFloat(node.Light!.Color.X, node.Light.Color.Y, node.Light.Color.Z, 1.0f);
+                
+                // Draw a small diamond or box
+                float s = 0.2f;
+                renderer.DrawLine(pos + new Vector3(s,0,0), pos - new Vector3(s,0,0), color);
+                renderer.DrawLine(pos + new Vector3(0,s,0), pos - new Vector3(0,s,0), color);
+                renderer.DrawLine(pos + new Vector3(0,0,s), pos - new Vector3(0,0,s), color);
+                
+                // Direction for spot/directional
+                if (node.Light.Type != 0) // Not Point
+                {
+                    var dir = Vector3.TransformNormal(new Vector3(0,0,-1), world);
+                    renderer.DrawLine(pos, pos + dir * 2.0f, color);
                 }
             }
         }
@@ -180,33 +215,23 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _lightBuffer.AddLight(light);
     }
 
-                public void LoadScene(SceneAsset scene, bool additive = false)
+    public void LoadScene(SceneAsset scene, bool additive = false)
+    {
+        Console.WriteLine($"[GltfPass] LoadScene called (Additive: {additive}). Roots: {scene.RootNodes.Count}");
+        
+        _gd.WaitForIdle();
 
-                {
+        if (!additive)
+        {
+            ClearResources();
+        }
 
-                    _gd.WaitForIdle();
+        int[] materialMap = LoadMaterials(scene);
 
-                    
+        LoadMeshes(scene, materialMap);
 
-                    if (!additive)
-
-                    {
-
-                        ClearResources();
-
-                    }
-
-            
-
-                    int[] materialMap = LoadMaterials(scene);
-
-                    LoadMeshes(scene, materialMap);
-
-                    
-
-                    SortAndUploadInstances();
-
-                }
+        SortAndUploadInstances();
+    }
 
     public void LoadScene(string scenePath) {
         var sceneAsset = SceneAsset.Load(scenePath);
@@ -271,7 +296,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     }
 
     public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null) {
-        if (camera == null || _meshInstances.Count == 0)
+        if (camera == null)
             return;
 
         // Reset frame stats
@@ -281,7 +306,12 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         RenderedVertices = 0;
 
         _cameraBuffer.Update(gd, camera);
+        
+        CollectLights();
         _lightBuffer.UpdateGPU();
+
+        if (_meshInstances.Count == 0)
+            return;
 
         // 1. Culling Pass
         _visibleTransforms.Clear();
@@ -289,10 +319,11 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         var frustum = new Frustum(viewProj);
 
         // Query BVH
-        var visibleIndices = _bvh.Query(frustum);
+        var (visibleIndices, stats) = _bvh.Query(frustum);
+        CullingStats = stats;
         
         // Force include selected node and its subtree (bypass culling)
-        if (_selectedNode != null) {
+        if (_selectedNode != null && IsGizmoActive) {
             ForceVisibleRecursive(_selectedNode, visibleIndices);
         }
         
@@ -411,6 +442,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         // Rebuild SSBO and update map
         var uniforms = new ModelUniform[_meshInstances.Count];
         _nodeToInstance.Clear();
+        TotalSceneTriangles = 0;
 
         // Prepare indices for BVH
         var indices = new List<int>(_meshInstances.Count);
@@ -418,6 +450,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         for (int i = 0; i < _meshInstances.Count; i++) {
             var inst = _meshInstances[i];
             indices.Add(i);
+            TotalSceneTriangles += inst.Mesh.IndexCount / 3;
 
             // Look up world transform
             if (!_nodeWorldTransforms.TryGetValue(inst.Node, out var world))
@@ -534,6 +567,11 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         var worldTransform = node.LocalTransform * parentWorld;
         _nodeWorldTransforms[node] = worldTransform;
 
+        if (node.Light != null) {
+            Console.WriteLine($"[GltfPass] Found light in node '{node.Name}'");
+            _lightNodes.Add(node);
+        }
+
         if (node.Mesh != null) {
             var meshRef = node.Mesh;
             if (TryLoadMesh(meshRef, materialMap, out MeshGpu? meshGpu, out int globalMaterialIndex)) {
@@ -636,6 +674,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     }
 
     private void ClearResources() {
+        Console.WriteLine("[GltfPass] ClearResources called");
         foreach (var mesh in _meshCache.Values) {
             mesh.Dispose();
         }
@@ -698,6 +737,43 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     private static void LogInstanceDebug(SceneNode node, Matrix4x4 local, Matrix4x4 world) {
         // Debug logging... (kept minimal)
+    }
+
+    private void CollectLights() {
+        _lightBuffer.Clear();
+
+        // 1. Manual lights
+        foreach (var l in _manualLights) {
+            _lightBuffer.AddLight(l);
+        }
+
+        // 2. Scene lights
+        foreach (var node in _lightNodes) {
+            if (node.Light == null) continue;
+
+            if (_nodeWorldTransforms.TryGetValue(node, out var world)) {
+                var pos = world.Translation;
+                // Forward is -Z
+                var dir = Vector3.TransformNormal(new Vector3(0, 0, -1), world);
+
+                // SceneLight uses Radians. LightUniform expects Degrees (based on internal conversion).
+                float innerDeg = (float)(node.Light.InnerCone * 180.0 / Math.PI);
+                float outerDeg = (float)(node.Light.OuterCone * 180.0 / Math.PI);
+
+                var light = new LightUniform(
+                    pos,
+                    node.Light.Range,
+                    node.Light.Color,
+                    node.Light.Intensity,
+                    (LightType)node.Light.Type,
+                    dir,
+                    innerDeg,
+                    outerDeg
+                );
+
+                _lightBuffer.AddLight(light);
+            }
+        }
     }
 
     public void Dispose() {

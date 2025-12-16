@@ -116,6 +116,12 @@ public class EditorManager : IDisposable
         {
             if (ImGui.BeginMenu("File"))
             {
+                if (ImGui.MenuItem("New Scene"))
+                {
+                    var scene = new SceneAsset { Name = "New Scene" };
+                    OnImportComplete(scene);
+                }
+                
                 if (ImGui.MenuItem("Import Model..."))
                 {
                     OpenImportDialog();
@@ -128,6 +134,14 @@ public class EditorManager : IDisposable
                     // TODO: Exit application
                 }
 
+                ImGui.EndMenu();
+            }
+
+            if (ImGui.BeginMenu("Create"))
+            {
+                if (ImGui.MenuItem("Point Light")) CreateLight(0);
+                if (ImGui.MenuItem("Directional Light")) CreateLight(1);
+                if (ImGui.MenuItem("Spot Light")) CreateLight(2);
                 ImGui.EndMenu();
             }
 
@@ -298,6 +312,40 @@ public class EditorManager : IDisposable
         _sceneInspector.SetScene(scene);
         _assetBrowser.IsOpen = true; // Refresh browser
         SceneRequested?.Invoke(scene, false);
+    }
+
+    private void CreateLight(int type)
+    {
+        if (_currentScene == null)
+        {
+            _currentScene = new SceneAsset { Name = "Untitled Scene" };
+            _sceneInspector.SetScene(_currentScene);
+        }
+
+        var light = new SceneLight
+        {
+            Type = type,
+            Color = Vector3.One,
+            Intensity = type == 1 ? 5.0f : 20.0f,
+            Range = 20.0f
+        };
+
+        var node = new SceneNode
+        {
+            Name = type switch { 0 => "Point Light", 1 => "Directional Light", 2 => "Spot Light", _ => "Light" },
+            Light = light,
+            LocalTransform = Matrix4x4.CreateTranslation(0, 2, 0)
+        };
+
+        // Add to persistent scene hierarchy (for Inspector)
+        _currentScene.RootNodes.Add(node);
+        
+        // Create a temporary scene delta for the renderer (Additive)
+        var deltaScene = new SceneAsset();
+        deltaScene.RootNodes.Add(node);
+        
+        // Refresh renderer with just the new light
+        SceneRequested?.Invoke(deltaScene, true);
     }
 
     public void Dispose()

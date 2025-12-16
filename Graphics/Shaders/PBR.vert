@@ -32,17 +32,19 @@ void main()
     vec4 worldPos = u_Model[gl_InstanceIndex] * vec4(v_Position, 1.0);
     f_WorldPos = worldPos.xyz;
 
-    // Normal (to world space)
-    f_Normal = normalize(v_Normal);
-
     // Tangent space basis
-    vec3 T = normalize(v_Tangent.xyz);
-    vec3 N = normalize(f_Normal);
+    mat3 nMat = mat3(transpose(inverse(u_Model[gl_InstanceIndex])));
+    
+    // Normal (to world space)
+    f_Normal = normalize(nMat * v_Normal);
+
+    vec3 T = normalize(nMat * v_Tangent.xyz);
+    vec3 N = normalize(nMat * v_Normal);
     vec3 B = cross(N, T) * v_Tangent.w; // reconstruct bitangent with sign
     f_TBN = mat3(T, B, N);
    
     f_UV = v_TexCoord * vec2(1,-1);
 
     // Clip space
-    gl_Position = u_Proj * u_View * mat4(1) * worldPos;
+    gl_Position = u_Proj * u_View * worldPos;
 }

@@ -11,4 +11,10 @@ public struct RenderStats
     public long SourceVertices;
     public long SourceTriangles;
     public int TotalInstances;
+    
+    public int UniqueMaterials;
+    public int NodesVisited;
+    public int NodesCulled;
+    public int LeafsTested;
+    public long TrianglesCulled;
 }

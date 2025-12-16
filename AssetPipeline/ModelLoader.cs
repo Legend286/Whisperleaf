@@ -52,18 +52,34 @@ namespace Whisperleaf.Graphics.Loaders
                         aim.ColorEmissive.G,
                         aim.ColorEmissive.B);
 
+                // Debug logging for texture slots
+                var activeSlots = new List<string>();
+                foreach (TextureType type in Enum.GetValues(typeof(TextureType)))
+                {
+                    int count = aim.GetMaterialTextureCount(type);
+                    if (count > 0)
+                        activeSlots.Add($"{type}={count}");
+                }
+                Console.WriteLine($"[Assimp] Material '{m.Name}': {string.Join(" ", activeSlots)}");
+
                 // Texture paths (Assimp distinguishes by TextureType, we normalize)
-                m.BaseColorPath = ResolveTexture(scene, aim, TextureType.BaseColor, modelDir) ??
+                m.BaseColorPath = ResolveTexture(scene, aim, TextureType.BaseColor, modelDir) ?? 
                                   ResolveTexture(scene, aim, TextureType.Diffuse, modelDir);
-                m.NormalPath = ResolveTexture(scene, aim, TextureType.NormalCamera, modelDir) ??
-                               ResolveTexture(scene, aim, TextureType.Normals, modelDir);
+                
+                m.NormalPath = ResolveTexture(scene, aim, TextureType.Normals, modelDir);
                 m.EmissivePath = ResolveTexture(scene, aim, TextureType.Emissive, modelDir);
 
                 // Try to load individual PBR maps first
                 m.OcclusionPath = ResolveTexture(scene, aim, TextureType.AmbientOcclusion, modelDir) ??
-                                  ResolveTexture(scene, aim, TextureType.Ambient, modelDir);
-                m.RoughnessPath = ResolveTexture(scene, aim, TextureType.Roughness, modelDir);
-                m.MetallicPath  = ResolveTexture(scene, aim, TextureType.Metalness, modelDir);
+                                  ResolveTexture(scene, aim, TextureType.Ambient, modelDir) ??
+                                  ResolveTexture(scene, aim, TextureType.Lightmap, modelDir) ??
+                                  ResolveTexture(scene, aim, TextureType.Unknown, modelDir);
+                                  
+                m.RoughnessPath = ResolveTexture(scene, aim, TextureType.Roughness, modelDir) ??
+                                  ResolveTexture(scene, aim, TextureType.Unknown, modelDir);
+                                  
+                m.MetallicPath  = ResolveTexture(scene, aim, TextureType.Metalness, modelDir) ??
+                                  ResolveTexture(scene, aim, TextureType.Unknown, modelDir);
 
                 // Check for packed RMA texture
                 // Case 1: All three point to the same texture
@@ -106,6 +122,8 @@ namespace Whisperleaf.Graphics.Loaders
             var normals = new Vector3[am.VertexCount];
             var uvs = new Vector2[am.VertexCount];
             var tangents4 = new Vector4[am.VertexCount];
+            
+            bool hasUVs = am.TextureCoordinateChannelCount > 0 && am.TextureCoordinateChannels[0].Count == am.VertexCount;
 
             for (int v = 0; v < am.VertexCount; v++)
             {
@@ -115,7 +133,7 @@ namespace Whisperleaf.Graphics.Loaders
                 var n = am.Normals.Count > v ? am.Normals[v] : new Vector3D(0, 1, 0);
                 normals[v] = new Vector3(n.X, n.Y, n.Z);
 
-                if (am.TextureCoordinateChannelCount > 0 && am.TextureCoordinateChannels[0].Count > v)
+                if (hasUVs)
                 {
                     var uv = am.TextureCoordinateChannels[0][v];
                     uvs[v] = new Vector2(uv.X, uv.Y);
@@ -145,9 +163,16 @@ namespace Whisperleaf.Graphics.Loaders
                     tangents4[v] = new Vector4(T, sign);
                 }
             }
-            else
+            else if (hasUVs)
             {
                 tangents4 = TangentGenerator.Generate(positions, normals, uvs, indices);
+            }
+            else
+            {
+                // Fallback for missing tangents AND missing UVs
+                // Use default tangent (1,0,0) and w=1
+                var defaultTangent = new Vector4(1, 0, 0, 1);
+                Array.Fill(tangents4, defaultTangent);
             }
 
             // Interleave

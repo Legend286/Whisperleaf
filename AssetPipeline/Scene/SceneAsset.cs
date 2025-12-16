@@ -107,6 +107,7 @@ public class SceneNode
     public string Name { get; set; } = string.Empty;
     public Matrix4x4 LocalTransform { get; set; } = Matrix4x4.Identity;
     public MeshReference? Mesh { get; set; }
+    public SceneLight? Light { get; set; }
     public List<SceneNode> Children { get; set; } = new();
 
     /// <summary>
@@ -162,4 +163,14 @@ public class MaterialReference
     public string? NormalHash { get; set; }
     public string? RMAHash { get; set; }
     public string? EmissiveHash { get; set; }
+}
+
+public class SceneLight
+{
+    public int Type { get; set; } // 0=Point, 1=Directional, 2=Spot
+    public Vector3 Color { get; set; } = Vector3.One;
+    public float Intensity { get; set; } = 1.0f;
+    public float Range { get; set; } = 10.0f;
+    public float InnerCone { get; set; } = 0.5f; // Radians
+    public float OuterCone { get; set; } = 0.6f; // Radians
 }

@@ -19,6 +19,12 @@ public static class RMATexturePacker
     /// <returns>Packed RMA texture</returns>
     public static Image<Rgba32> Pack(Image<Rgba32>? roughness, Image<Rgba32>? metallic, Image<Rgba32>? ao)
     {
+        // Warn if all inputs are missing
+        if (roughness == null && metallic == null && ao == null)
+        {
+             // Console.WriteLine("[RMATexturePacker] Warning: All PBR inputs null. Generating default 1x1 RMA.");
+        }
+
         // Determine output size (use largest input texture)
         int width = 1, height = 1;
         if (roughness != null) { width = Math.Max(width, roughness.Width); height = Math.Max(height, roughness.Height); }

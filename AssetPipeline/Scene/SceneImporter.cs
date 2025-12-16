@@ -20,12 +20,13 @@ public static class SceneImporter
     public static SceneAsset Import(string gltfPath, string? outputPath = null, float scaleFactor = 1.0f)
     {
         // Load and process through cache
-        var (meshes, materials, assimpScene) = CachedModelLoader.Load(gltfPath);
+        string sceneName = Path.GetFileNameWithoutExtension(gltfPath);
+        var (meshes, materials, assimpScene) = CachedModelLoader.Load(gltfPath, sceneName);
 
         // Create scene asset
         var scene = new SceneAsset
         {
-            Name = Path.GetFileNameWithoutExtension(gltfPath),
+            Name = sceneName,
             SourceFile = Path.GetFullPath(gltfPath),
             ImportDate = DateTime.Now
         };
@@ -64,10 +65,10 @@ public static class SceneImporter
                 EmissiveFactor = mat.EmissiveFactor,
                 MetallicFactor = mat.MetallicFactor,
                 RoughnessFactor = mat.RoughnessFactor,
-                BaseColorHash = GetTextureHash(mat.BaseColorPath),
-                NormalHash = GetTextureHash(mat.NormalPath),
-                RMAHash = GetTextureHash(mat.MetallicPath),
-                EmissiveHash = GetTextureHash(mat.EmissivePath)
+                BaseColorHash = mat.BaseColorHash,
+                NormalHash = mat.NormalHash,
+                RMAHash = mat.RMAHash,
+                EmissiveHash = mat.EmissiveHash
             });
         }
 
@@ -152,24 +153,12 @@ public static class SceneImporter
     }
 
     /// <summary>
-    /// Extract texture hash from cache path
-    /// </summary>
-    private static string? GetTextureHash(string? cachePath)
-    {
-        if (string.IsNullOrEmpty(cachePath))
-            return null;
-
-        // Cache path format: ~/.cache/whisperleaf/textures/{hash}.wltex
-        var fileName = Path.GetFileNameWithoutExtension(cachePath);
-        return fileName;
-    }
-
-    /// <summary>
     /// Get import preview info without saving
     /// </summary>
     public static SceneMetadata GetImportPreview(string gltfPath)
     {
-        var (meshes, _, _) = CachedModelLoader.Load(gltfPath);
+        string sceneName = Path.GetFileNameWithoutExtension(gltfPath);
+        var (meshes, _, _) = CachedModelLoader.Load(gltfPath, sceneName);
 
         Vector3 boundsMin = new Vector3(float.MaxValue);
         Vector3 boundsMax = new Vector3(float.MinValue);

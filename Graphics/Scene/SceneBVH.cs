@@ -16,11 +16,13 @@ public class SceneBVH
         public int Left; // If -1, is leaf
         public int Right; // If > -1, InstanceIndex is in Left/Right
         public int InstanceIndex; // Only valid if Left == -1
+        public int Depth; // Depth in the BVH tree
     }
 
     private Node[] _nodes = Array.Empty<Node>();
     private int _nodeCount = 0;
     private int _rootIndex = -1;
+    private int _maxDepth = 0; // Track max depth for coloring
 
     // Temporary list for query results
     private readonly List<int> _queryResults = new(1024);
@@ -28,6 +30,7 @@ public class SceneBVH
     public void Build(List<int> indices, Func<int, (Vector3 Min, Vector3 Max)> aabbProvider)
     {
         _nodeCount = 0;
+        _maxDepth = 0;
         if (indices.Count == 0)
         {
             _rootIndex = -1;
@@ -44,13 +47,16 @@ public class SceneBVH
         // Recursively build
         // We clone the indices list because we will sort it
         int[] workingIndices = indices.ToArray();
-        _rootIndex = BuildRecursive(workingIndices, 0, workingIndices.Length, aabbProvider);
+        _rootIndex = BuildRecursive(workingIndices, 0, workingIndices.Length, aabbProvider, 0);
     }
 
-    private int BuildRecursive(int[] indices, int start, int end, Func<int, (Vector3 Min, Vector3 Max)> aabbProvider)
+    private int BuildRecursive(int[] indices, int start, int end, Func<int, (Vector3 Min, Vector3 Max)> aabbProvider, int depth)
     {
         int count = end - start;
         int nodeIndex = _nodeCount++;
+
+        _nodes[nodeIndex].Depth = depth;
+        _maxDepth = Math.Max(_maxDepth, depth);
 
         // Calculate AABB for this range
         Vector3 min = new Vector3(float.MaxValue);
@@ -88,8 +94,8 @@ public class SceneBVH
             Array.Sort(indices, start, count, new AxisComparer(axis, aabbProvider));
 
             int mid = start + count / 2;
-            _nodes[nodeIndex].Left = BuildRecursive(indices, start, mid, aabbProvider);
-            _nodes[nodeIndex].Right = BuildRecursive(indices, mid, end, aabbProvider);
+            _nodes[nodeIndex].Left = BuildRecursive(indices, start, mid, aabbProvider, depth + 1);
+            _nodes[nodeIndex].Right = BuildRecursive(indices, mid, end, aabbProvider, depth + 1);
         }
 
         return nodeIndex;
@@ -100,41 +106,64 @@ public class SceneBVH
         for (int i = 0; i < _nodeCount; i++)
         {
             var node = _nodes[i];
-            RgbaFloat color = node.Left == -1 ? RgbaFloat.Green : RgbaFloat.Grey;
+            RgbaFloat color;
+            if (node.Left == -1)
+            {
+                // Leaf nodes are green
+                color = RgbaFloat.Green;
+            }
+            else
+            {
+                // Non-leaf nodes colored by depth
+                // Interpolate from blue (shallow) to red (deep)
+                float t = _maxDepth > 0 ? (float)node.Depth / _maxDepth : 0.0f;
+                color = new RgbaFloat(t, 0.0f, 1.0f - t, 1.0f); // Interpolate R from 0 to 1, B from 1 to 0
+            }
             renderer.DrawAABB(node.Min, node.Max, color);
         }
     }
 
-    public List<int> Query(Frustum frustum)
+    public struct BVHStats
     {
-        _queryResults.Clear();
-        if (_rootIndex != -1)
-        {
-            QueryRecursive(_rootIndex, ref frustum);
-        }
-        return _queryResults;
+        public int NodesVisited;
+        public int NodesCulled;
+        public int LeafsTested;
     }
 
-    private void QueryRecursive(int nodeIndex, ref Frustum frustum)
+    public (List<int> Results, BVHStats Stats) Query(Frustum frustum)
+    {
+        _queryResults.Clear();
+        var stats = new BVHStats();
+        
+        if (_rootIndex != -1)
+        {
+            QueryRecursive(_rootIndex, ref frustum, ref stats);
+        }
+        return (_queryResults, stats);
+    }
+
+    private void QueryRecursive(int nodeIndex, ref Frustum frustum, ref BVHStats stats)
     {
         // Check AABB
-        // Note: Using ref node pointer would be unsafe if array resizes, but here we don't resize during query.
         ref var node = ref _nodes[nodeIndex];
+        stats.NodesVisited++;
 
         if (!frustum.Intersects(node.Min, node.Max))
         {
+            stats.NodesCulled++;
             return;
         }
 
         if (node.Left == -1)
         {
             // Leaf
+            stats.LeafsTested++;
             _queryResults.Add(node.InstanceIndex);
         }
         else
         {
-            QueryRecursive(node.Left, ref frustum);
-            QueryRecursive(node.Right, ref frustum);
+            QueryRecursive(node.Left, ref frustum, ref stats);
+            QueryRecursive(node.Right, ref frustum, ref stats);
         }
     }
 

@@ -58,12 +58,20 @@ public class SceneInspectorWindow : EditorWindow
             ImGui.Text($"  Batching Efficiency: {instReduction:F1}%");
 
             ImGui.Separator();
+            ImGui.Text("Culling (BVH):");
+            ImGui.Text($"  Nodes Visited: {Stats.NodesVisited:N0}");
+            ImGui.Text($"  Nodes Culled:  {Stats.NodesCulled:N0}");
+            ImGui.Text($"  Leafs Tested:  {Stats.LeafsTested:N0}");
+            ImGui.Text($"  Tris Culled:   {Stats.TrianglesCulled:N0}");
+
+            ImGui.Separator();
             ImGui.Text("Geometry:");
             ImGui.Text($"  Triangles: {Stats.RenderedTriangles:N0} (Instanced)");
             ImGui.Text($"  Vertices:  {Stats.RenderedVertices:N0} (Instanced)");
             
             ImGui.Separator();
             ImGui.Text("Source Assets (Unique):");
+            ImGui.Text($"  Materials: {Stats.UniqueMaterials}");
             ImGui.Text($"  Meshes:    {Stats.SourceMeshes}");
             ImGui.Text($"  Vertices:  {Stats.SourceVertices:N0}");
             // ImGui.Text($"  Triangles: {Stats.SourceTriangles:N0}"); // We didn't track source triangles, only indices/vertices. Indices/3 approx.
@@ -199,6 +207,66 @@ public class SceneInspectorWindow : EditorWindow
                 var bounds = node.Mesh.AABBMax - node.Mesh.AABBMin;
                 ImGui.Text($"Bounds: ({bounds.X:F2}, {bounds.Y:F2}, {bounds.Z:F2})");
                 ImGui.Text($"Material: {node.Mesh.MaterialIndex}");
+
+                ImGui.TreePop();
+            }
+        }
+
+        if (node.Light != null)
+        {
+            ImGui.Separator();
+            if (ImGui.TreeNodeEx("Light", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                var light = node.Light;
+                
+                // Type
+                string[] types = { "Point", "Directional", "Spot" };
+                int type = light.Type;
+                if (ImGui.Combo("Type", ref type, types, types.Length))
+                {
+                    light.Type = type;
+                }
+
+                // Color
+                Vector3 color = light.Color;
+                if (ImGui.ColorEdit3("Color", ref color))
+                {
+                    light.Color = color;
+                }
+
+                // Intensity
+                float intensity = light.Intensity;
+                if (ImGui.DragFloat("Intensity", ref intensity, 0.1f, 0.0f, 1000.0f))
+                {
+                    light.Intensity = intensity;
+                }
+
+                if (type != 1) // Not directional
+                {
+                    // Range
+                    float range = light.Range;
+                    if (ImGui.DragFloat("Range", ref range, 0.5f, 0.0f, 1000.0f))
+                    {
+                        light.Range = range;
+                    }
+                }
+
+                if (type == 2) // Spot
+                {
+                    // Cone angles (Radians -> Degrees for UI)
+                    float innerDeg = light.InnerCone * 180.0f / MathF.PI;
+                    float outerDeg = light.OuterCone * 180.0f / MathF.PI;
+
+                    bool changed = false;
+                    if (ImGui.DragFloat("Inner Angle", ref innerDeg, 1.0f, 0.0f, 179.0f)) changed = true;
+                    if (ImGui.DragFloat("Outer Angle", ref outerDeg, 1.0f, 0.0f, 179.0f)) changed = true;
+
+                    if (changed)
+                    {
+                        light.InnerCone = innerDeg * MathF.PI / 180.0f;
+                        light.OuterCone = outerDeg * MathF.PI / 180.0f;
+                    }
+                }
 
                 ImGui.TreePop();
             }

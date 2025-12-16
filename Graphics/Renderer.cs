@@ -46,16 +46,6 @@ public class Renderer
         _scenePass = new GltfPass(_window.graphicsDevice);
         _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice);
 
-        
-        _scenePass.AddLight(new LightUniform(
-                    position: new Vector3(-3,1,0),
-                    range: 30.0f,
-                    color: new Vector3(0.5f, 1.0f, 0.75f),
-                    intensity: 20.0f, type: LightType.Spot, innerCone: 40, outerCone: 60, direction: new Vector3(-1,0,1)));
-            
-        
-
-
         _passes.Add(_scenePass);
 
         _editorManager.SceneRequested += OnSceneRequested;
@@ -127,7 +117,12 @@ public class Renderer
                 SourceMeshes = _scenePass.SourceMeshes,
                 SourceVertices = _scenePass.SourceVertices,
                 SourceTriangles = _scenePass.SourceIndices / 3,
-                TotalInstances = _scenePass.TotalInstances
+                TotalInstances = _scenePass.TotalInstances,
+                UniqueMaterials = _scenePass.UniqueMaterialCount,
+                NodesVisited = _scenePass.CullingStats.NodesVisited,
+                NodesCulled = _scenePass.CullingStats.NodesCulled,
+                LeafsTested = _scenePass.CullingStats.LeafsTested,
+                TrianglesCulled = _scenePass.TotalSceneTriangles - _scenePass.RenderedTriangles
             };
             _editorManager.UpdateStats(stats);
 
@@ -172,6 +167,8 @@ public class Renderer
         ImGuizmo.Manipulate(ref view.M11, ref projection.M11, _gizmoOperation, MODE.WORLD, ref gizmoTransform.M11);
 
         bool isUsing = ImGuizmo.IsUsing();
+        _scenePass.IsGizmoActive = isUsing; // Update GltfPass with gizmo state
+        
         if (isUsing)
         {
             _scenePass.ApplyWorldTransform(_selectedNode, gizmoTransform);

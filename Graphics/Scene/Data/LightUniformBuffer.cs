@@ -20,6 +20,7 @@ public class LightUniformBuffer : IDisposable
     private DeviceBuffer _paramBuffer;
     private ResourceLayout _paramLayout;
     private ResourceSet _paramResourceSet;
+    private int _lastLightCount = -1;
 
     public LightUniformBuffer(GraphicsDevice gd, int initialCapacity = 1024)
     {
@@ -61,10 +62,19 @@ public class LightUniformBuffer : IDisposable
 
     public void UpdateGPU()
     {
+        // Log only on change
+        if (_lights.Count != _lastLightCount)
+        {
+            Console.WriteLine($"[LightUniformBuffer] Light count changed: {_lastLightCount} -> {_lights.Count}");
+            _lastLightCount = _lights.Count;
+        }
+
+        // Always update count, even if 0
+        // Write 16 bytes (4 uints) to satisfy uniform buffer alignment/size requirements
+        _gd.UpdateBuffer(_paramBuffer, 0, new uint[] { (uint)_lights.Count, 0, 0, 0 });
+
         if (_lights.Count == 0)
         {
-            // Update count to 0
-            _gd.UpdateBuffer(_paramBuffer, 0, 0u);
             return;
         }
 
@@ -83,7 +93,6 @@ public class LightUniformBuffer : IDisposable
         }
 
         _gd.UpdateBuffer(_buffer, 0, _lights.ToArray());
-        _gd.UpdateBuffer(_paramBuffer, 0, (uint)_lights.Count);
     }
 
     public ResourceLayout Layout => _layout;

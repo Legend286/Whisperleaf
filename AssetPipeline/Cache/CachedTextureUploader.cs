@@ -75,7 +75,7 @@ public static class CachedTextureUploader
             TextureType.BaseColor => PixelFormat.R8_G8_B8_A8_UNorm_SRgb,
             TextureType.Normal => PixelFormat.R8_G8_B8_A8_UNorm,
             TextureType.RMA => PixelFormat.R8_G8_B8_A8_UNorm,
-            TextureType.Emissive => PixelFormat.R8_G8_B8_A8_UNorm, // Could use HDR format
+            TextureType.Emissive => PixelFormat.R8_G8_B8_A8_UNorm_SRgb, // Emissive is sRGB
             _ => PixelFormat.R8_G8_B8_A8_UNorm
         };
     }
