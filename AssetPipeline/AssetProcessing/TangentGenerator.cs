@@ -47,7 +47,8 @@ namespace Whisperleaf.AssetPipeline.AssetProcessing
                 var t = tan1[i];
 
                 // Gram-Schmidt
-                var tangent = Vector3.Normalize(t - n * Vector3.Dot(n, t));
+                var tSub = t - n * Vector3.Dot(n, t);
+                var tangent = tSub.LengthSquared() > 1e-8f ? Vector3.Normalize(tSub) : new Vector3(1, 0, 0);
                 float w = (Vector3.Dot(Vector3.Cross(n, tangent), tan2[i]) < 0f) ? -1f : 1f;
 
                 outT[i] = new Vector4(tangent, w);

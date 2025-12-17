@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Whisperleaf.Utilities.Serialization;
 
 namespace Whisperleaf.AssetPipeline.Scene;
@@ -10,6 +11,9 @@ namespace Whisperleaf.AssetPipeline.Scene;
 /// </summary>
 public class SceneAsset
 {
+    [JsonIgnore]
+    public string ScenePath { get; set; } = string.Empty;
+
     public string Name { get; set; } = string.Empty;
     public string SourceFile { get; set; } = string.Empty;
     public DateTime ImportDate { get; set; }
@@ -26,6 +30,7 @@ public class SceneAsset
     {
         var json = JsonSerializer.Serialize(this, SerializerOptions);
         File.WriteAllText(path, json);
+        ScenePath = Path.GetFullPath(path);
     }
 
     /// <summary>
@@ -38,6 +43,7 @@ public class SceneAsset
                     ?? throw new Exception($"Failed to deserialize scene: {path}");
 
         FixupTransforms(scene);
+        scene.ScenePath = Path.GetFullPath(path);
         return scene;
     }
 

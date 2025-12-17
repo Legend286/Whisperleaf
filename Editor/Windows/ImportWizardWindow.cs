@@ -105,7 +105,7 @@ public class ImportWizardWindow : EditorWindow
             }
         }
     }
-
+    
     private void Import()
     {
         if (_importing || string.IsNullOrEmpty(_sourcePath))

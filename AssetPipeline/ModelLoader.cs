@@ -144,21 +144,17 @@ namespace Whisperleaf.Graphics.Loaders
             var indices = am.GetUnsignedIndices();
 
             // Tangents
-            if (am.Tangents.Count == am.VertexCount)
+            if (am.Tangents.Count == am.VertexCount && am.BiTangents.Count == am.VertexCount)
             {
-                bool hasBi = am.BiTangents.Count == am.VertexCount;
                 for (int v = 0; v < am.VertexCount; v++)
                 {
                     var t = am.Tangents[v];
-                    var T = Vector3.Normalize(new Vector3(t.X, t.Y, t.Z));
-                    float sign = 1f;
+                    var tVec = new Vector3(t.X, t.Y, t.Z);
+                    var T = tVec.LengthSquared() > 1e-8f ? Vector3.Normalize(tVec) : new Vector3(1, 0, 0);
 
-                    if (hasBi)
-                    {
-                        var b = am.BiTangents[v];
-                        var B = new Vector3(b.X, b.Y, b.Z);
-                        sign = Vector3.Dot(Vector3.Cross(normals[v], T), B) < 0f ? -1f : 1f;
-                    }
+                    var b = am.BiTangents[v];
+                    var B = new Vector3(b.X, b.Y, b.Z);
+                    float sign = Vector3.Dot(Vector3.Cross(normals[v], T), B) < 0f ? -1f : 1f;
 
                     tangents4[v] = new Vector4(T, sign);
                 }
