@@ -97,6 +97,8 @@ public class SceneMetadata
     public int TotalMeshCount { get; set; }
     public int TotalVertexCount { get; set; }
     public int TotalTriangleCount { get; set; }
+    public int UpAxis { get; set; } = 1; // 0=X, 1=Y, 2=Z
+    public int UpAxisSign { get; set; } = 1;
 }
 
 /// <summary>

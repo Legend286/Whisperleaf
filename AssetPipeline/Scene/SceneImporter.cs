@@ -55,6 +55,16 @@ public static class SceneImporter
             TotalTriangleCount = totalTriCount
         };
 
+        // Detect Up Axis from metadata
+        if (assimpScene.Metadata != null)
+        {
+            if (assimpScene.Metadata.TryGetValue("UpAxis", out var upAxisEntry) && upAxisEntry.DataType == Assimp.MetaDataType.Int32)
+                scene.Metadata.UpAxis = upAxisEntry.DataAs<int>() ?? 1;
+
+            if (assimpScene.Metadata.TryGetValue("UpAxisSign", out var upAxisSignEntry) && upAxisSignEntry.DataType == Assimp.MetaDataType.Int32)
+                scene.Metadata.UpAxisSign = upAxisSignEntry.DataAs<int>() ?? 1;
+        }
+
         // Build material references
         foreach (var mat in materials)
         {
@@ -90,13 +100,23 @@ public static class SceneImporter
         var nodes = new List<SceneNode>();
 
         // Process this node
+        // Transform is corrected by Interop.ToNumerics (Transposed)
         var localTransform = Maths.Interop.ToNumerics(assimpNode.Transform);
         if (parentTransform == null)
         {
             localTransform = localTransform * scaleTransform;
         }
 
-        // If node has meshes, create a scene node for each
+        // Create container node representing this Assimp node
+        var containerNode = new SceneNode
+        {
+            Name = assimpNode.Name,
+            LocalTransform = localTransform
+        };
+        nodes.Add(containerNode);
+
+        // If node has meshes, create child nodes for them
+        // This preserves the structure (Node -> [Mesh1, Mesh2, Child1...])
         if (assimpNode.MeshIndices.Count > 0)
         {
             foreach (int meshIndex in assimpNode.MeshIndices)
@@ -104,10 +124,10 @@ public static class SceneImporter
                 var mesh = meshes[meshIndex];
                 var meshHash = WlMeshFormat.ComputeHash(mesh);
 
-                var node = new SceneNode
+                var meshNode = new SceneNode
                 {
                     Name = string.IsNullOrEmpty(mesh.Name) ? $"Mesh_{meshIndex}" : mesh.Name,
-                    LocalTransform = Matrix4x4.CreateTranslation(mesh.CenteringOffset) * localTransform,
+                    LocalTransform = Matrix4x4.CreateTranslation(mesh.CenteringOffset),
                     Mesh = new MeshReference
                     {
                         MeshHash = meshHash,
@@ -119,34 +139,15 @@ public static class SceneImporter
                     }
                 };
 
-                nodes.Add(node);
+                containerNode.Children.Add(meshNode);
             }
-        }
-        else if (assimpNode.Children.Count > 0)
-        {
-            // Transform-only node
-            var node = new SceneNode
-            {
-                Name = assimpNode.Name,
-                LocalTransform = localTransform
-            };
-
-            nodes.Add(node);
         }
 
         // Process children
         foreach (var child in assimpNode.Children)
         {
             var childNodes = BuildHierarchy(child, meshes, scaleTransform, localTransform);
-
-            if (nodes.Count > 0)
-            {
-                nodes[0].Children.AddRange(childNodes);
-            }
-            else
-            {
-                nodes.AddRange(childNodes);
-            }
+            containerNode.Children.AddRange(childNodes);
         }
 
         return nodes;
