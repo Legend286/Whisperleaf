@@ -1,16 +1,14 @@
-using System;
-using System.Collections.Generic;
-using System.Numerics;
 using ImGuiNET;
 using ImGuizmoNET;
 using Veldrid;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor;
 using Whisperleaf.Graphics.Data;
-using Whisperleaf.Graphics.Immediate; // Added
+using Whisperleaf.Graphics.Immediate;
 using Whisperleaf.Graphics.RenderPasses;
 using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Graphics.Scene.Data;
+using Whisperleaf.Graphics.Shadows;
 using Whisperleaf.Input;
 using Whisperleaf.Platform;
 

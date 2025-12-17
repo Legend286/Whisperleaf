@@ -130,17 +130,71 @@ public class SceneBVH
         public int LeafsTested;
     }
 
-    public (List<int> Results, BVHStats Stats) Query(Frustum frustum)
+    public int FindEnclosingNode(Vector3 min, Vector3 max)
+    {
+        if (_rootIndex == -1) return -1;
+        
+        int current = _rootIndex;
+        
+        // Iterative descent
+        while (true)
+        {
+            ref var node = ref _nodes[current];
+            
+            // If leaf, stop
+            if (node.Left == -1) return current;
+            
+            ref var left = ref _nodes[node.Left];
+            ref var right = ref _nodes[node.Right];
+            
+            bool inLeft = Contains(left.Min, left.Max, min, max);
+            bool inRight = Contains(right.Min, right.Max, min, max);
+            
+            if (inLeft && inRight)
+            {
+                // In both? Pick the smaller one or just left. 
+                // Usually means huge overlap. Let's pick the one with smaller volume?
+                // For simplicity/speed, pick Left.
+                current = node.Left;
+            }
+            else if (inLeft)
+            {
+                current = node.Left;
+            }
+            else if (inRight)
+            {
+                current = node.Right;
+            }
+            else
+            {
+                // In neither child fully, so this node is the best fit
+                return current;
+            }
+        }
+    }
+
+    private static bool Contains(Vector3 containerMin, Vector3 containerMax, Vector3 itemMin, Vector3 itemMax)
+    {
+        return itemMin.X >= containerMin.X && itemMin.Y >= containerMin.Y && itemMin.Z >= containerMin.Z &&
+               itemMax.X <= containerMax.X && itemMax.Y <= containerMax.Y && itemMax.Z <= containerMax.Z;
+    }
+
+    public (List<int> Results, BVHStats Stats) Query(Frustum frustum, int startNodeIndex = -1)
     {
         _queryResults.Clear();
         var stats = new BVHStats();
         
-        if (_rootIndex != -1)
+        int root = startNodeIndex == -1 ? _rootIndex : startNodeIndex;
+
+        if (root != -1 && root < _nodeCount)
         {
-            QueryRecursive(_rootIndex, ref frustum, ref stats);
+            QueryRecursive(root, ref frustum, ref stats);
         }
         return (_queryResults, stats);
     }
+    
+    // Original method overload
+    public (List<int> Results, BVHStats Stats) Query(Frustum frustum) => Query(frustum, -1);
 
     private void QueryRecursive(int nodeIndex, ref Frustum frustum, ref BVHStats stats)
     {
