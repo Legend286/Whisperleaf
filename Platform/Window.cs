@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Veldrid;
 using Veldrid.Sdl2;
 using Veldrid.StartupUtilities;
@@ -7,7 +8,7 @@ namespace Whisperleaf.Platform;
 
 public class Window
 {
-    private Sdl2Window sdlWindow;
+    private static Sdl2Window sdlWindow;
 
     public GraphicsDevice graphicsDevice;
     public Sdl2Window SdlWindow => sdlWindow;
@@ -17,6 +18,8 @@ public class Window
 
     public float AspectRatio => (float)Width / Height;
 
+    public static Window Instance;
+    
     private GraphicsBackend Backend;
 
     public Window(int width, int height, string title)
@@ -55,6 +58,8 @@ public class Window
 
         VeldridStartup.CreateWindowAndGraphicsDevice(wci, gdopt, Backend, out sdlWindow, out graphicsDevice);
         sdlWindow.Resized += OnWindowResized;
+
+        Instance = this;
     }
 
     public event Action<int, int>? WindowResized;

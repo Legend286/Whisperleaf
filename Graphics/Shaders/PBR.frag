@@ -48,6 +48,94 @@ layout(set = 5, binding = 0) uniform LightParams {
     vec3 _padding;
 };
 
+struct ShadowInfo {
+    mat4 viewProj;
+    vec4 atlasRect; // x,y, scale, layer
+};
+
+layout(set = 6, binding = 0) readonly buffer ShadowBuffer {
+    ShadowInfo shadows[];
+};
+
+layout(set = 7, binding = 0) uniform texture2DArray ShadowMap;
+layout(set = 7, binding = 1) uniform sampler ShadowSampler;
+
+float CalcShadow(int index, vec3 worldPos, vec3 N, vec3 L, vec3 lightPos, float lightRadius) {
+    ShadowInfo info = shadows[index];
+    float NdotL = max(dot(N, L), 0.0);
+    float dist = distance(lightPos, worldPos);
+    float proximity = clamp(1.0 - (dist / lightRadius), 0.0, 1.0);
+
+    // world-space normal offset (tune these)
+    float normalOffset = (0.003 * (1.0 - NdotL) + 0.01 * proximity);
+
+    // offset the position used for shadow lookup
+    vec3 biasedWorldPos = worldPos + normalize(N) * normalOffset;
+
+    // then project biasedWorldPos instead of worldPos
+    vec4 posLight = info.viewProj * vec4(biasedWorldPos, 1.0);
+    
+    vec3 projCoords = posLight.xyz / posLight.w;
+    
+    // Check if outside frustum (shadow clipping)
+    if (projCoords.z > 1.0 || projCoords.x < -1.0 || projCoords.x > 1.0 || projCoords.y < -1.0 || projCoords.y > 1.0)
+        return 1.0;
+    projCoords.y *= -1;
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    
+    // Vulkan NDC (Top-Left -1,-1) -> Texture (Top-Left 0,0) ?
+    // In Vulkan, Y is down. NDC Y=-1 is Top. Texture Y=0 is Top.
+    // Standard perspective projection flips Y in Vulkan if not handled.
+    // If we use standard Veldrid/System.Numerics projection, it's usually designed for Clip Space.
+    // Let's assume standard 0-1 UV.
+    
+    vec2 uv = info.atlasRect.xy + projCoords.xy * info.atlasRect.z;
+    float layer = info.atlasRect.w;
+    
+    float currentDepth = projCoords.z;
+    
+    // PCF 3x3 or just simple lookup
+    // Simple 1 tap for now to test
+    
+    float bias = 0.0001;
+    
+    vec2 minUV = info.atlasRect.xy;
+    vec2 maxUV = info.atlasRect.xy + vec2(info.atlasRect.z);
+    
+    const float PCF_RADIUS = 0.125f; // try 0.5–1.25
+    
+    vec2 texelSize = (1 / (2048 * vec2(info.atlasRect.z)));
+    
+    float tileRes = 2048.0 * info.atlasRect.z;
+    float pcfScale = clamp(tileRes / 512.0, 0.25, 1.0);
+
+    vec2 pcfStep = texelSize * PCF_RADIUS * pcfScale;
+    
+    
+    float visibility = 0.0;
+
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            vec2 offset = vec2(x, y) * pcfStep;
+            
+            vec2 sampleUV = clamp(
+            uv + offset,
+            minUV + texelSize,
+            maxUV - texelSize
+            );
+            
+            float d = texture(
+            sampler2DArray(ShadowMap, ShadowSampler),
+            vec3(sampleUV, layer)
+            ).r;
+
+            visibility += (currentDepth - bias <= d) ? 1.0 : 0.0;
+        }
+    }
+
+    return visibility / 9.0;
+}
+
 const float PI = 3.14159265359;
 
 float D_GGX(float NdotH, float roughness)
@@ -152,10 +240,14 @@ void main()
             if (type == 2)
             {
                 L = normalize(lightVec);
-                vec3 D = normalize(-light.direction.xyz);
+                // D is direction of spot light (Light -> Target)
+                // L is Pixel -> Light
+                // We want angle between (-L) and D.
+                vec3 D = normalize(light.direction.xyz);
+                
                 float cosInner = cos(light.params.x);
                 float cosOuter = cos(light.params.y);
-                float cosTheta = dot(L, D);
+                float cosTheta = dot(-L, D);
                 spotAttenuation = clamp((cosTheta - cosOuter) / (cosInner - cosOuter), 0.0, 1.0);
             }
 
@@ -168,8 +260,38 @@ void main()
             attenuation *= spotAttenuation * window;
         }
 
+        // Shadow Logic
+        float shadow = 0.0;
+        int shadowIdx = int(light.params.z);
+        if (shadowIdx >= 0) {
+            if (type == 0) { // Point
+                 // Determine face for CubeMap emulation on 2D Atlas
+                 // Light is at light.position
+                 // Direction is Light -> Pixel = -L
+                 // We need to match the Face Indexing used in ShadowPass (GetPointLightView)
+                 // 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
+                 
+                 vec3 dir = -L; // Light -> Pixel
+                 vec3 absDir = abs(dir);
+                 int face = 0;
+                 if (absDir.x > absDir.y && absDir.x > absDir.z) {
+                    face = dir.x > 0 ? 0 : 1;
+                 } else if (absDir.y > absDir.z) {
+                    face = dir.y > 0 ? 2 : 3;
+                 } else {
+                    face = dir.z > 0 ? 4 : 5;
+                 }
+                 
+                 // Add face offset to base shadow index
+                 shadow = CalcShadow(shadowIdx + face, f_WorldPos, f_Normal, L, light.position.xyz, light.position.w);
+            } else {
+                 // Spot / Directional uses single matrix
+                 shadow = CalcShadow(shadowIdx, f_WorldPos, f_Normal, L, light.position.xyz, light.position.w);
+            }
+        }
+
         vec3 contribution = EvaluatePBR(N, V, L, baseColor.rgb, metallic, roughness, F0, light.color.rgb, light.color.w * attenuation);
-        lighting += contribution;
+        lighting += contribution * shadow;
     }
 
     vec3 ambient = baseColor.rgb * ao * 0.03;

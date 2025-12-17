@@ -24,6 +24,8 @@ public class Renderer
     private readonly EditorManager _editorManager;
     private readonly GltfPass _scenePass;
     private readonly ImmediateRenderer _immediateRenderer;
+    private readonly ShadowAtlas _shadowAtlas;
+    private readonly ShadowPass _shadowPass;
     
     public bool ShowBVH { get; set; }
     public bool ShowSelectionBounds { get; set; } = true;
@@ -43,7 +45,11 @@ public class Renderer
         _editorManager.GizmoOperationChanged += operation => _gizmoOperation = operation;
         _gizmoOperation = _editorManager.GizmoOperation;
 
-        _scenePass = new GltfPass(_window.graphicsDevice);
+        _shadowAtlas = new ShadowAtlas(_window.graphicsDevice);
+        _scenePass = new GltfPass(_window.graphicsDevice, _shadowAtlas.ResourceLayout);
+        _scenePass.ShadowAtlas = _shadowAtlas;
+        _shadowPass = new ShadowPass(_window.graphicsDevice);
+        
         _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice);
 
         _passes.Add(_scenePass);
@@ -97,8 +103,34 @@ public class Renderer
             _cameraController?.Update(Time.DeltaTime);
             InputManager.Update(snapshot);
             _editorManager.Update(Time.DeltaTime, snapshot);
+            
+            if (_camera != null)
+            {
+                // Update Shadow Allocations
+                // We convert IReadOnlyList to List or just pass generic? 
+                // ShadowAtlas.UpdateAllocations takes List<SceneNode>.
+                // _scenePass.LightNodes is IReadOnlyList.
+                // We create a new list for now.
+                var lights = new List<SceneNode>(_scenePass.LightNodes);
+                _shadowAtlas.UpdateAllocations(lights, _camera);
+            }
+
             _cl.Begin();
             
+            // Clear Shadow Maps
+            for (int i = 0; i < _shadowAtlas.GetLayerCount(); i++)
+            {
+                _cl.SetFramebuffer(_shadowAtlas.GetFramebuffer(i));
+                _cl.ClearDepthStencil(1.0f);
+            }
+
+            // Render Shadows
+            if (_camera != null)
+            {
+                _shadowPass.Render(_window.graphicsDevice, _cl, _shadowAtlas, _scenePass);
+            }
+            
+            // Main Pass
             _cl.SetFramebuffer(_window.graphicsDevice.MainSwapchain.Framebuffer);
             _cl.ClearColorTarget(0, RgbaFloat.Black);
             _cl.ClearDepthStencil(1.0f);
@@ -195,6 +227,8 @@ public class Renderer
     public void Dispose()
     {
         _scenePass.Dispose();
+        _shadowPass.Dispose();
+        _shadowAtlas.Dispose();
         _immediateRenderer.Dispose();
         _editorManager.Dispose();
     }

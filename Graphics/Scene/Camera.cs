@@ -1,5 +1,7 @@
+using System.Net.Mime;
 using System.Numerics;
 using Whisperleaf.Input;
+using Whisperleaf.Platform;
 
 namespace Whisperleaf.Graphics.Scene;
 
@@ -28,7 +30,7 @@ public class Camera
         
         return Matrix4x4.CreateLookAt(Position, Position + forward, up);
     }
-    public Matrix4x4 GetProjectionMatrix() => Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI * Fov / 180.0f, AspectRatio, Near, Far);
+    public Matrix4x4 GetProjectionMatrix() => Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI * Fov / 180.0f, Window.Instance.AspectRatio, Near, Far);
     public Vector3 GetForward() => Vector3.Transform(-Vector3.UnitZ, Orientation);
     public Vector3 GetRight()   => Vector3.Transform(Vector3.UnitX, Orientation);
     public Vector3 GetUp()      => Vector3.Transform(Vector3.UnitY, Orientation);

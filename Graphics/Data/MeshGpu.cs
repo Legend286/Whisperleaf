@@ -17,9 +17,8 @@ namespace Whisperleaf.Graphics.Assets
         public MeshRange Range { get; }
         private readonly GeometryBuffer _geometryBuffer;
         
-        // These are removed as they are now in GeometryBuffer
-        // public DeviceBuffer VertexBuffer { get; }
-        // public DeviceBuffer IndexBuffer { get; }
+        public DeviceBuffer VertexBuffer => _geometryBuffer.VertexBuffer;
+        public DeviceBuffer IndexBuffer => _geometryBuffer.IndexBuffer;
         
         public int IndexCount => (int)Range.IndexCount;
         public Matrix4x4 WorldMatrix { get; }
