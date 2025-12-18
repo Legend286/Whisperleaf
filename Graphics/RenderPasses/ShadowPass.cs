@@ -108,7 +108,7 @@ public class ShadowPass : IDisposable
             // Use Frustum Culling from Root.
             // Previous optimization using FindEnclosingNode was incorrect for Object BVH (overlapping nodes).
             var frustum = new Frustum(viewProj);
-            var (indices, stats) = scene.BVH.Query(frustum);
+            var (indices, stats) = scene.Query(frustum); // Call GltfPass.Query which queries both BVHs
             
             if (indices.Count == 0) continue;
             

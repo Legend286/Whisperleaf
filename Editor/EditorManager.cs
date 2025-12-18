@@ -40,6 +40,7 @@ public class EditorManager : IDisposable {
     public OPERATION GizmoOperation { get; private set; } = OPERATION.TRANSLATE;
 
     public bool ShowBVH { get; set; }
+    public bool ShowDynamicBVH { get; set; }
 
     public bool ShowSelection { get; set; } = true;
 
@@ -70,6 +71,13 @@ public class EditorManager : IDisposable {
         _sceneInspector.NodeSelected += node => SceneNodeSelected?.Invoke(node);
         _sceneInspector.GizmoOperationChanged += OnGizmoOperationChanged;
         GizmoOperation = _sceneInspector.CurrentOperation;
+    }
+
+    public void SetScene(SceneAsset scene)
+    {
+        _currentScene = scene;
+        _sceneInspector.SetScene(scene);
+        _assetBrowser.IsOpen = true;
     }
 
     public void Update(float deltaTime, InputSnapshot snapshot) {
@@ -207,8 +215,10 @@ public class EditorManager : IDisposable {
 
             if (ImGui.BeginMenu("View")) {
                 bool showBvh = ShowBVH;
+                bool showDynBvh = ShowDynamicBVH;
                 bool showSel = ShowSelection;
-                if (ImGui.MenuItem("Show BVH", null, ref showBvh)) ShowBVH = showBvh;
+                if (ImGui.MenuItem("Show Static BVH", null, ref showBvh)) ShowBVH = showBvh;
+                if (ImGui.MenuItem("Show Dynamic BVH", null, ref showDynBvh)) ShowDynamicBVH = showDynBvh;
                 if (ImGui.MenuItem("Show Selection", null, ref showSel)) ShowSelection = showSel;
                 ImGui.EndMenu();
             }

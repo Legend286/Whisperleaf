@@ -101,25 +101,33 @@ public class SceneBVH
         return nodeIndex;
     }
 
-    public void DrawDebug(ImmediateRenderer renderer)
+    public void DrawDebug(ImmediateRenderer renderer, RgbaFloat leafColor)
     {
-        for (int i = 0; i < _nodeCount; i++)
+        if (_nodes.Length > 0 && _rootIndex != -1 && _nodeCount > 0)
         {
-            var node = _nodes[i];
-            RgbaFloat color;
-            if (node.Left == -1)
-            {
-                // Leaf nodes are green
-                color = RgbaFloat.Green;
-            }
-            else
-            {
-                // Non-leaf nodes colored by depth
-                // Interpolate from blue (shallow) to red (deep)
-                float t = _maxDepth > 0 ? (float)node.Depth / _maxDepth : 0.0f;
-                color = new RgbaFloat(t, 0.0f, 1.0f - t, 1.0f); // Interpolate R from 0 to 1, B from 1 to 0
-            }
+            DrawNode(renderer, _rootIndex, 0, leafColor);
+        }
+    }
+
+    private void DrawNode(ImmediateRenderer renderer, int nodeIndex, int depth, RgbaFloat leafColor)
+    {
+        if (nodeIndex >= _nodeCount) return;
+        
+        ref var node = ref _nodes[nodeIndex];
+        
+        if (node.Left == -1) // Leaf
+        {
+            renderer.DrawAABB(node.Min, node.Max, leafColor);
+        }
+        else // Internal
+        {
+            // Depth based color
+            float t = (depth % 5) / 5.0f;
+            var color = new RgbaFloat(1.0f - t, 0.5f, t, 0.3f); 
             renderer.DrawAABB(node.Min, node.Max, color);
+            
+            if (node.Left != -1) DrawNode(renderer, node.Left, depth + 1, leafColor);
+            if (node.Right != -1) DrawNode(renderer, node.Right, depth + 1, leafColor);
         }
     }
 
@@ -153,8 +161,6 @@ public class SceneBVH
             if (inLeft && inRight)
             {
                 // In both? Pick the smaller one or just left. 
-                // Usually means huge overlap. Let's pick the one with smaller volume?
-                // For simplicity/speed, pick Left.
                 current = node.Left;
             }
             else if (inLeft)
@@ -167,7 +173,6 @@ public class SceneBVH
             }
             else
             {
-                // In neither child fully, so this node is the best fit
                 return current;
             }
         }
@@ -193,12 +198,12 @@ public class SceneBVH
         return (_queryResults, stats);
     }
     
-    // Original method overload
     public (List<int> Results, BVHStats Stats) Query(Frustum frustum) => Query(frustum, -1);
 
     private void QueryRecursive(int nodeIndex, ref Frustum frustum, ref BVHStats stats)
     {
-        // Check AABB
+        if (nodeIndex >= _nodeCount) return;
+        
         ref var node = ref _nodes[nodeIndex];
         stats.NodesVisited++;
 
@@ -243,7 +248,6 @@ public class SceneBVH
     }
 }
 
-// Vector3 indexer extension for convenience
 public static class VectorExtensions
 {
     public static float Get(this Vector3 v, int index) => index switch

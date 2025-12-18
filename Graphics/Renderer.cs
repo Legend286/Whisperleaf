@@ -1,6 +1,8 @@
 using ImGuiNET;
 using ImGuizmoNET;
+using System.Numerics;
 using Veldrid;
+using Whisperleaf.AssetPipeline;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor;
 using Whisperleaf.Graphics.Data;
@@ -26,7 +28,11 @@ public class Renderer
     private readonly ShadowPass _shadowPass;
     
     public bool ShowBVH { get; set; }
+    public bool ShowDynamicBVH { get; set; }
     public bool ShowSelectionBounds { get; set; } = true;
+    
+    public SceneNode? SelectedNode => _selectedNode;
+    public bool IsManipulating => ImGuizmo.IsUsing();
     
     private Camera? _camera;
     private CameraController? _cameraController;
@@ -60,6 +66,8 @@ public class Renderer
     
     public void AddLight(LightUniform light) => _scenePass.AddLight(light);
 
+    public void AddCustomMesh(string name, MeshData data) => _scenePass.AddCustomMesh(name, data);
+
     public void SetCamera(Camera camera)
     {
         _camera = camera;
@@ -69,6 +77,7 @@ public class Renderer
     public void LoadScene(SceneAsset scene)
     {
         _scenePass.LoadScene(scene);
+        _editorManager.SetScene(scene);
     }
 
     public void LoadScene(string path)
@@ -83,7 +92,9 @@ public class Renderer
         }
     }
 
-    public void Run()
+    public void UpdateNodeTransform(SceneNode node, Matrix4x4 transform) => _scenePass.ApplyWorldTransform(node, transform);
+
+    public void Run(Action<float>? onUpdate = null)
     {
         while (_window.Exists)
         {
@@ -97,6 +108,8 @@ public class Renderer
                 System.Threading.Thread.Sleep(10);
                 continue;
             }
+            
+            onUpdate?.Invoke(Time.DeltaTime);
 
             _cameraController?.Update(Time.DeltaTime);
             InputManager.Update(snapshot);
@@ -156,7 +169,7 @@ public class Renderer
             };
             _editorManager.UpdateStats(stats);
 
-            _scenePass.DrawDebug(_immediateRenderer, _editorManager.ShowBVH, _editorManager.ShowSelection);
+            _scenePass.DrawDebug(_immediateRenderer, _editorManager.ShowBVH, _editorManager.ShowDynamicBVH, _editorManager.ShowSelection);
             if (_camera != null) _immediateRenderer.Render(_cl, _camera);
 
             HandleGizmo();

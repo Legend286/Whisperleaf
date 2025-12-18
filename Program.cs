@@ -16,15 +16,17 @@ class Program
         var renderer = new Renderer(window);
         renderer.SetCamera(camera);
 
-        var defaultScenePath = Path.Combine("Resources", "Scenes", "Bistro_Godot.wlscene");
-        if (File.Exists(defaultScenePath))
-        {
-            renderer.LoadScene(defaultScenePath);
-        }
-        else
-        {
-            Console.WriteLine($"No default scene found at '{defaultScenePath}'. Use the editor to import a scene.");
-        }
-        renderer.Run();
+        // var defaultScenePath = Path.Combine("Resources", "Scenes", "Bistro_Godot.wlscene");
+        // if (File.Exists(defaultScenePath))
+        // {
+        //     renderer.LoadScene(defaultScenePath);
+        // }
+        // else
+        // {
+        //     Console.WriteLine($"No default scene found at '{defaultScenePath}'. Use the editor to import a scene.");
+        // }
+        
+        var physicsScene = new Whisperleaf.Physics.PhysicsTestScene(renderer);
+        renderer.Run((dt) => physicsScene.Update(renderer));
     }
 }

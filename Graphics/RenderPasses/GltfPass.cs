@@ -23,9 +23,13 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private readonly LightUniformBuffer _lightBuffer;
     private readonly ShadowDataBuffer _shadowDataBuffer;
     private readonly GeometryBuffer _geometryBuffer;
-    private readonly SceneBVH _bvh = new();
+    private readonly SceneBVH _staticBvh = new();
+    private readonly SceneBVH _dynamicBvh = new();
+    private readonly List<int> _staticIndices = new();
+    private readonly List<int> _dynamicIndices = new();
 
     private readonly Dictionary<string, MeshGpu> _meshCache = new();
+    private readonly Dictionary<string, MeshGpu> _customMeshCache = new();
     private readonly Dictionary<string, int> _materialCache = new();
     private readonly List<MaterialData> _materials = new();
     private readonly List<MeshInstance> _meshInstances = new();
@@ -55,7 +59,6 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     public long TotalSceneTriangles { get; private set; }
     public bool IsGizmoActive { get; set; }
 
-    public SceneBVH BVH => _bvh;
     public IReadOnlyList<MeshInstance> MeshInstances => _meshInstances;
     public IReadOnlyList<SceneNode> LightNodes => _lightNodes;
 
@@ -121,14 +124,19 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     public void RebuildBVH() {
         if (_meshInstances.Count == 0) return;
 
-        // Prepare indices for BVH
-        var indices = new List<int>(_meshInstances.Count);
-        for (int i = 0; i < _meshInstances.Count; i++) {
-            indices.Add(i);
-        }
+        // Rebuild static BVH only if explicitly requested (e.g. gizmo usage)
+        BuildBVH(_staticBvh, _staticIndices);
+    }
 
-        // Build BVH using current world transforms
-        _bvh.Build(indices, (i) => {
+    private void RebuildDynamicBVH() {
+        BuildBVH(_dynamicBvh, _dynamicIndices);
+    }
+
+    private void BuildBVH(SceneBVH bvh, List<int> indices)
+    {
+        if (indices.Count == 0) return;
+        
+        bvh.Build(indices, (i) => {
             var inst = _meshInstances[i];
             var mesh = inst.Mesh;
             if (_nodeWorldTransforms.TryGetValue(inst.Node, out var world)) {
@@ -155,11 +163,16 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         });
     }
 
-    public void DrawDebug(ImmediateRenderer renderer, bool showBVH, bool showSelection)
+    public void DrawDebug(ImmediateRenderer renderer, bool showBVH, bool showDynamicBVH, bool showSelection)
     {
         if (showBVH)
         {
-            _bvh.DrawDebug(renderer);
+            _staticBvh.DrawDebug(renderer, RgbaFloat.White);
+        }
+        
+        if (showDynamicBVH)
+        {
+            _dynamicBvh.DrawDebug(renderer, RgbaFloat.Green);
         }
 
         if (showSelection && _selectedNode != null)
@@ -220,6 +233,16 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         var worldMax = new Vector3(worldCenter.X + newEx, worldCenter.Y + newEy, worldCenter.Z + newEz);
         
         return (worldMin, worldMax);
+    }
+
+    public void AddCustomMesh(string name, MeshData data)
+    {
+        Console.WriteLine($"[GltfPass] Adding custom mesh '{name}' with {data.Vertices.Length} floats and {data.Indices.Length} indices.");
+        if (_customMeshCache.ContainsKey(name))
+        {
+            _customMeshCache[name].Dispose();
+        }
+        _customMeshCache[name] = new MeshGpu(_geometryBuffer, data);
     }
 
     public void LoadScene(SceneAsset scene, bool additive = false)
@@ -290,6 +313,23 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         return true;
     }
 
+    public (List<int> Results, SceneBVH.BVHStats Stats) Query(Frustum frustum)
+    {
+        var (staticIndices, staticStats) = _staticBvh.Query(frustum);
+        var (dynamicIndices, dynamicStats) = _dynamicBvh.Query(frustum);
+        
+        var results = new List<int>(staticIndices.Count + dynamicIndices.Count);
+        results.AddRange(staticIndices);
+        results.AddRange(dynamicIndices);
+        
+        var stats = staticStats;
+        stats.NodesVisited += dynamicStats.NodesVisited;
+        stats.NodesCulled += dynamicStats.NodesCulled;
+        stats.LeafsTested += dynamicStats.LeafsTested;
+        
+        return (results, stats);
+    }
+
     public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null) {
         if (camera == null)
             return;
@@ -304,6 +344,9 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         
         CollectLights();
         _lightBuffer.UpdateGPU();
+        
+        // Rebuild dynamic BVH every frame
+        RebuildDynamicBVH();
 
         if (_meshInstances.Count == 0)
             return;
@@ -313,8 +356,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         var viewProj = camera.ViewMatrix * camera.ProjectionMatrix;
         var frustum = new Frustum(viewProj);
 
-        // Query BVH
-        var (visibleIndices, stats) = _bvh.Query(frustum);
+        // Query both BVHs
+        var (visibleIndices, stats) = Query(frustum);
         CullingStats = stats;
         
         // Force include selected node and its subtree (bypass culling)
@@ -322,7 +365,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             ForceVisibleRecursive(_selectedNode, visibleIndices);
         }
         
-        visibleIndices.Sort(); // Batching relies on sorted order
+        visibleIndices.Sort(); 
 
         var drawRanges = new List<(MeshGpu Mesh, int MaterialIndex, int InstanceCount, int StartIndex)>();
 
@@ -339,22 +382,19 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 int batchMaterialIndex = batchStartInstance.MaterialIndex;
                 int batchVisibleCount = 0;
 
-                // Process all visible instances that belong to this batch
                 while (listIndex < visibleIndices.Count)
                 {
                     int nextIdx = visibleIndices[listIndex];
                     
-                    // Skip duplicates if ForceVisible added already visible indices
                     if (nextIdx == instanceIdx && listIndex > 0 && visibleIndices[listIndex-1] == instanceIdx)
                     {
                         listIndex++;
                         continue;
                     }
-                    instanceIdx = nextIdx; // Update current tracker
+                    instanceIdx = nextIdx;
                     
                     var next = _meshInstances[nextIdx];
                     
-                    // Check if we hit a new batch boundary
                     if (next.Mesh != batchMesh || next.MaterialIndex != batchMaterialIndex)
                         break;
 
@@ -439,11 +479,15 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _nodeToInstance.Clear();
         TotalSceneTriangles = 0;
 
-        var indices = new List<int>(_meshInstances.Count);
+        _staticIndices.Clear();
+        _dynamicIndices.Clear();
 
         for (int i = 0; i < _meshInstances.Count; i++) {
             var inst = _meshInstances[i];
-            indices.Add(i);
+            
+            if (inst.Node.IsStatic) _staticIndices.Add(i);
+            else _dynamicIndices.Add(i);
+            
             TotalSceneTriangles += inst.Mesh.IndexCount / 3;
 
             if (!_nodeWorldTransforms.TryGetValue(inst.Node, out var world))
@@ -455,31 +499,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             _nodeToInstance[inst.Node] = i;
         }
 
-        _bvh.Build(indices, (i) => {
-            var inst = _meshInstances[i];
-            var mesh = inst.Mesh;
-            if (_nodeWorldTransforms.TryGetValue(inst.Node, out var world)) {
-                var center = (mesh.AABBMin + mesh.AABBMax) * 0.5f;
-                var extents = (mesh.AABBMax - mesh.AABBMin) * 0.5f;
-                
-                var worldCenter = Vector3.Transform(center, world);
-                
-                var absM11 = Math.Abs(world.M11); var absM12 = Math.Abs(world.M12); var absM13 = Math.Abs(world.M13);
-                var absM21 = Math.Abs(world.M21); var absM22 = Math.Abs(world.M22); var absM23 = Math.Abs(world.M23);
-                var absM31 = Math.Abs(world.M31); var absM32 = Math.Abs(world.M32); var absM33 = Math.Abs(world.M33);
-                
-                float newEx = absM11 * extents.X + absM21 * extents.Y + absM31 * extents.Z;
-                float newEy = absM12 * extents.X + absM22 * extents.Y + absM32 * extents.Z;
-                float newEz = absM13 * extents.X + absM23 * extents.Y + absM33 * extents.Z;
-                
-                var worldMin = new Vector3(worldCenter.X - newEx, worldCenter.Y - newEy, worldCenter.Z - newEz);
-                var worldMax = new Vector3(worldCenter.X + newEx, worldCenter.Y + newEy, worldCenter.Z + newEz);
-                
-                return (worldMin, worldMax);
-            }
-            return (new Vector3(-100000), new Vector3(100000)); 
-        });
-
+        BuildBVH(_staticBvh, _staticIndices);
+        
         _modelBuffer.EnsureCapacity(_meshInstances.Count);
         _modelBuffer.UpdateAll(uniforms);
     }
@@ -578,6 +599,16 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         meshGpu = null;
         globalMaterialIndex = 0;
 
+        if (_customMeshCache.TryGetValue(meshRef.MeshHash, out meshGpu)) {
+            Console.WriteLine($"[GltfPass] Found custom mesh '{meshRef.MeshHash}'");
+             if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
+                globalMaterialIndex = materialMap[meshRef.MaterialIndex];
+            }
+            return true;
+        } else {
+             // Console.WriteLine($"[GltfPass] Custom mesh '{meshRef.MeshHash}' NOT found in cache.");
+        }
+
         if (_meshCache.TryGetValue(meshRef.MeshHash, out meshGpu)) {
             if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
                 globalMaterialIndex = materialMap[meshRef.MaterialIndex];
@@ -633,6 +664,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
 
         _meshCache.Clear();
+        // Do NOT clear custom mesh cache
+        
         SourceVertices = 0;
         SourceIndices = 0;
 
@@ -649,8 +682,11 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _nodeParents.Clear();
         _nodeWorldTransforms.Clear();
         _loggedFirstInstance = false;
+        
+        _staticIndices.Clear();
+        _dynamicIndices.Clear();
     }
-
+    
     private void UpdateWorldRecursive(SceneNode node, Matrix4x4 parentWorld) {
         var worldTransform = node.LocalTransform * parentWorld;
 
