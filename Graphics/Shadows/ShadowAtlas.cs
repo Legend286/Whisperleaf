@@ -90,10 +90,19 @@ public class ShadowAtlas : IDisposable {
 
     public Framebuffer GetFramebuffer(int layer) => _layerFramebuffers[layer];
 
-    public void UpdateAllocations(List<SceneNode> lights, Camera camera, GltfPass scene) {
-        _allocations.Clear();
+        public void UpdateAllocations(List<SceneNode> lights, Camera camera, GltfPass scene, bool globalEnabled)
 
-        // Sort lights
+        {
+
+            _allocations.Clear();
+
+            
+
+            if (!globalEnabled) return;
+
+            
+
+            // Sort lights
         lights.Sort((a, b) =>
         {
             float scoreA = CalculateScore(a, camera);
@@ -111,9 +120,19 @@ public class ShadowAtlas : IDisposable {
         }
 
 
-        foreach (var light in lights) {
-            if (light.Light == null) continue;
-            if (!scene.TryGetWorldTransform(light, out var lightWorld)) continue;
+                foreach (var light in lights)
+
+
+                {
+
+
+                    if (light.Light == null) continue;
+
+
+                    if (!light.Light.CastShadows) continue;
+
+
+                    if (!scene.TryGetWorldTransform(light, out var lightWorld)) continue;
 
             var lightPos = lightWorld.Translation;
             var lightDir = Vector3.TransformNormal(new Vector3(0, 0, -1), lightWorld);

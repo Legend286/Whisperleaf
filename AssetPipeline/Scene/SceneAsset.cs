@@ -183,4 +183,5 @@ public class SceneLight
     public float Range { get; set; } = 10.0f;
     public float InnerCone { get; set; } = 0.5f; // Radians
     public float OuterCone { get; set; } = 0.6f; // Radians
+    public bool CastShadows { get; set; } = false;
 }

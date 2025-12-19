@@ -140,6 +140,14 @@ public class InspectorWindow : EditorWindow
                     NodePropertyChanged?.Invoke();
                 }
 
+                // Cast Shadows
+                bool castShadows = light.CastShadows;
+                if (ImGui.Checkbox("Cast Shadows", ref castShadows))
+                {
+                    light.CastShadows = castShadows;
+                    NodePropertyChanged?.Invoke();
+                }
+
                 // Color
                 Vector3 color = light.Color;
                 if (ImGui.ColorEdit3("Color", ref color))
@@ -168,17 +176,17 @@ public class InspectorWindow : EditorWindow
                 if (type == 2) // Spot
                 {
                     // Cone angles (Radians -> Degrees for UI)
-                    float innerDeg = light.InnerCone * 180.0f / MathF.PI;
-                    float outerDeg = light.OuterCone * 180.0f / MathF.PI;
+                    float innerDeg = light.InnerCone * 2 * 180.0f / MathF.PI;
+                    float outerDeg = light.OuterCone * 2  * 180.0f / MathF.PI;
 
                     bool changed = false;
-                    if (ImGui.DragFloat("Inner Angle", ref innerDeg, 1.0f, 0.0f, 179.0f)) changed = true;
-                    if (ImGui.DragFloat("Outer Angle", ref outerDeg, 1.0f, 0.0f, 179.0f)) changed = true;
+                    if (ImGui.DragFloat("Inner Angle", ref innerDeg, 1.0f, 0.0f, (79*2) - 0.1f)) changed = true;
+                    if (ImGui.DragFloat("Outer Angle", ref outerDeg, 1.0f, 0.0f, 79*2)) changed = true;
 
                     if (changed)
                     {
-                        light.InnerCone = innerDeg * MathF.PI / 180.0f;
-                        light.OuterCone = outerDeg * MathF.PI / 180.0f;
+                        light.InnerCone = (innerDeg / 2) * MathF.PI / 180.0f;
+                        light.OuterCone = (outerDeg / 2) * MathF.PI / 180.0f;
                         NodePropertyChanged?.Invoke();
                     }
                 }

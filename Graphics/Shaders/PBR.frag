@@ -91,7 +91,7 @@ float CalcShadow(int index, vec3 worldPos, vec3 N, vec3 L, vec3 lightPos, float 
     float dist = distance(lightPos, worldPos);
     float proximity = clamp(1.0 - (dist / lightRadius), 0.0, 1.0);
 
-    float normalOffset = (0.003 * (1.0 - NdotL) + 0.01 * proximity);
+    float normalOffset = (0.002 * (1.0 - NdotL) + 0.02 * proximity);
     vec3 biasedWorldPos = worldPos + normalize(N) * normalOffset;
     vec4 posLight = info.viewProj * vec4(biasedWorldPos, 1.0);
     
@@ -105,7 +105,7 @@ float CalcShadow(int index, vec3 worldPos, vec3 N, vec3 L, vec3 lightPos, float 
     vec2 uv = info.atlasRect.xy + projCoords.xy * info.atlasRect.z;
     float layer = info.atlasRect.w;
     float currentDepth = projCoords.z;
-    float bias = 0.0001;
+    float bias = 0.0002;
     vec2 minUV = info.atlasRect.xy;
     vec2 maxUV = info.atlasRect.xy + vec2(info.atlasRect.z);
     
@@ -308,6 +308,6 @@ void main()
         vec2 grid = fract(gl_FragCoord.xy / 16.0);
         if (grid.x < 0.05 || grid.y < 0.05) finalColor = vec3(1.0);
     }
-
-    out_Color = vec4(finalColor, baseColor.a);
+        
+    out_Color = vec4(finalColor, 1.0f);
 }

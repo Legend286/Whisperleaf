@@ -45,10 +45,10 @@ public class EditorManager : IDisposable {
 
     public bool ShowBVH { get; set; }
     public bool ShowDynamicBVH { get; set; }
-
     public bool ShowSelection { get; set; } = true;
     public bool ShowLightHeatmap { get; set; }
-
+    public bool ShowShadows { get; set; } = true;
+    
     public EditorManager(GraphicsDevice gd, Sdl2Window window) {
         _gd = gd;
 
@@ -268,10 +268,12 @@ public class EditorManager : IDisposable {
                 bool showDynBvh = ShowDynamicBVH;
                 bool showSel = ShowSelection;
                 bool showHeatmap = ShowLightHeatmap;
+                bool showShadows = ShowShadows;
                 if (ImGui.MenuItem("Show Static BVH", null, ref showBvh)) ShowBVH = showBvh;
                 if (ImGui.MenuItem("Show Dynamic BVH", null, ref showDynBvh)) ShowDynamicBVH = showDynBvh;
                 if (ImGui.MenuItem("Show Selection", null, ref showSel)) ShowSelection = showSel;
                 if (ImGui.MenuItem("Show Light Heatmap", null, ref showHeatmap)) ShowLightHeatmap = showHeatmap;
+                if (ImGui.MenuItem("Show Shadows", null, ref showShadows)) ShowShadows = showShadows;
                 ImGui.EndMenu();
             }
 

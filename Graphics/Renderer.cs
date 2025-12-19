@@ -40,6 +40,7 @@ public class Renderer
     public bool ShowDynamicBVH { get; set; }
     public bool ShowSelectionBounds { get; set; } = true;
     public bool ShowLightHeatmap { get; set; }
+    public bool EnableShadows { get; set; } = true;
     
     public SceneNode? SelectedNode => _selectedNode;
     public bool IsManipulating => ImGuizmo.IsUsing();
@@ -163,6 +164,7 @@ public class Renderer
             onUpdate?.Invoke(Time.DeltaTime);
 
             ShowLightHeatmap = _editorManager.ShowLightHeatmap;
+            EnableShadows = _editorManager.ShowShadows;
 
             _viewportWindow.Update(Time.DeltaTime);
             
@@ -178,7 +180,7 @@ public class Renderer
                 _scenePass.Update(camera);
                 
                 var lights = new List<SceneNode>(_scenePass.VisibleLights);
-                _shadowAtlas.UpdateAllocations(lights, camera, _scenePass);
+                _shadowAtlas.UpdateAllocations(lights, camera, _scenePass, EnableShadows);
             }
             
             _cl.Begin();

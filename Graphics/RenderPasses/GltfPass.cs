@@ -712,6 +712,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     private void SortAndUploadInstances() {
         if (_meshInstances.Count == 0 && _lightNodes.Count == 0) return;
+        
+        // Console.WriteLine("[GltfPass] Refreshing Structure...");
 
         // Sort meshes
         _meshInstances.Sort((a, b) =>
@@ -767,10 +769,10 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
 
 
-        BuildBVH(_staticBvh, _staticIndices);
-
-        _modelBuffer.EnsureCapacity(_meshInstances.Count);
-        _modelBuffer.UpdateAll(uniforms);
+                BuildBVH(_staticBvh, _staticIndices);
+                RebuildDynamicBVH(); // Ensure dynamic BVH is also updated immediately
+                
+                _modelBuffer.EnsureCapacity(_meshInstances.Count);        _modelBuffer.UpdateAll(uniforms);
     }
 
     private int[] LoadMaterials(SceneAsset scene) {
