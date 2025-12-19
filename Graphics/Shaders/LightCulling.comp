@@ -40,11 +40,123 @@ layout(std430, set = 0, binding = 5) buffer LightIndexCounter {
 shared uint s_TileLightIndices[1024];
 shared uint s_TileLightCount;
 
-vec2 Project(vec3 viewPos) {
-    vec4 clipPos = Projection * vec4(viewPos, 1.0);
-    vec3 ndcPos = clipPos.xyz / clipPos.w;
-    ndcPos.y = -ndcPos.y; // Flip Y for screen/tile coords
-    return (ndcPos.xy * 0.5 + 0.5) * ScreenSize;
+// Constants for Ray-Cone test
+const float RC_EPSILON_T = 1e-5;
+const float RC_EPSILON_GEOM = 1e-5;
+
+bool TestRaySphere(vec3 rayOrigin, vec3 rayDir, vec3 spherePos, float radius) {
+    vec3 oc = rayOrigin - spherePos;
+    float a = dot(rayDir, rayDir);
+    float b = 2.0 * dot(oc, rayDir);
+    float c = dot(oc, oc) - radius * radius;
+    const float A_EPSILON = 1e-7;
+
+    if (abs(a) < A_EPSILON) {
+        if (c <= 0.0) return true;
+        return false;
+    }
+
+    float discriminant = b * b - 4.0 * a * c;
+    if (discriminant < 0.0) return false;
+
+    float sqrtD = sqrt(discriminant);
+    float inv2a = 1.0 / (2.0 * a);
+    float tNear = (-b - sqrtD) * inv2a;
+    float tFar  = (-b + sqrtD) * inv2a;
+
+    if (tNear > tFar) {
+        float temp = tNear;
+        tNear = tFar;
+        tFar = temp;
+    }
+
+    if (tFar < 0.0) return false;
+
+    return true;
+}
+
+bool TestRayCone(vec3 rayOrigin, vec3 rayDir, vec3 coneApex, vec3 coneAxis, float cosConeAngle, float coneHeight) {
+    coneHeight = max(coneHeight, RC_EPSILON_T);
+    float robustCosConeAngle = clamp(cosConeAngle, RC_EPSILON_GEOM, 1.0 - RC_EPSILON_GEOM);
+    float cos2Angle = robustCosConeAngle * robustCosConeAngle;
+
+    // Check if ray origin is inside the cone
+    vec3 originToApex = rayOrigin - coneApex;
+    float originHeight = dot(originToApex, coneAxis);
+    
+    if (originHeight >= -RC_EPSILON_T && originHeight <= coneHeight + RC_EPSILON_T) {
+        if (originHeight > RC_EPSILON_T) {
+            float originDist = length(originToApex);
+            float originRadialDistSq = max(0.0, originDist * originDist - originHeight * originHeight);
+            
+            float sinAngle = sqrt(max(0.0, 1.0 - cos2Angle));
+            float expectedRadius = originHeight * sinAngle / robustCosConeAngle;
+            
+            // Check if inside radius (sqrt of squared dist vs radius)
+            if (sqrt(originRadialDistSq) <= expectedRadius + RC_EPSILON_T) {
+                return true;
+            }
+        } else {
+            // Very close to apex
+            return true;
+        }
+    }
+
+    vec3 co = originToApex;
+    float rayDirDotAxis = dot(rayDir, coneAxis);
+    float coDotAxis = dot(co, coneAxis);
+
+    float A = rayDirDotAxis * rayDirDotAxis - cos2Angle;
+    float B = 2.0 * (rayDirDotAxis * coDotAxis - dot(rayDir, co) * cos2Angle);
+    float C = coDotAxis * coDotAxis - dot(co, co) * cos2Angle;
+
+    float t1 = -1.0;
+    float t2 = -1.0;
+
+    if (abs(A) < RC_EPSILON_GEOM) {
+        if (abs(B) >= RC_EPSILON_GEOM) {
+            float t = -C / B;
+            if (t > RC_EPSILON_T) t1 = t;
+        }
+    } else {
+        float discriminant = B * B - 4.0 * A * C;
+        if (discriminant >= 0.0) {
+            float sqrtDisc = sqrt(discriminant);
+            float inv2A = 1.0 / (2.0 * A);
+            t1 = (-B - sqrtDisc) * inv2A;
+            t2 = (-B + sqrtDisc) * inv2A;
+        }
+    }
+
+    // Check cone surface intersections
+    if (t1 > RC_EPSILON_T) {
+         vec3 hit = rayOrigin + rayDir * t1;
+         float h = dot(hit - coneApex, coneAxis);
+         if (h >= -RC_EPSILON_T && h <= coneHeight + RC_EPSILON_T) return true;
+    }
+    if (t2 > RC_EPSILON_T) {
+         vec3 hit = rayOrigin + rayDir * t2;
+         float h = dot(hit - coneApex, coneAxis);
+         if (h >= -RC_EPSILON_T && h <= coneHeight + RC_EPSILON_T) return true;
+    }
+
+    // Check base cap intersection
+    if (abs(rayDirDotAxis) > RC_EPSILON_GEOM) {
+         float t_base = (coneHeight - coDotAxis) / rayDirDotAxis;
+         if (t_base > RC_EPSILON_T) {
+             vec3 baseHit = rayOrigin + rayDir * t_base;
+             vec3 baseToApex = baseHit - coneApex;
+             // Check if point is within base circle
+             float baseDistSq = dot(baseToApex, baseToApex) - coneHeight * coneHeight; 
+             
+             float sinAngle = sqrt(max(0.0, 1.0 - cos2Angle));
+             float baseRadius = coneHeight * sinAngle / robustCosConeAngle;
+             
+             if (baseDistSq <= baseRadius * baseRadius + RC_EPSILON_T) return true;
+         }
+    }
+
+    return false;
 }
 
 void main() {
@@ -60,7 +172,7 @@ void main() {
     vec2 tileMin = vec2(tileX, tileY) * float(tileSize);
     vec2 tileMax = vec2(tileX + 1, tileY + 1) * float(tileSize);
     
-    // Frustum Planes for Point Lights
+    // Frustum Planes
     vec2 invScreenSize = 1.0 / ScreenSize;
     float minX = (tileMin.x * invScreenSize.x) * 2.0 - 1.0;
     float maxX = (tileMax.x * invScreenSize.x) * 2.0 - 1.0;
@@ -73,10 +185,14 @@ void main() {
     vec4 vBL = invProj * vec4(minX, bottomY, 1.0, 1.0); vBL /= vBL.w;
     vec4 vBR = invProj * vec4(maxX, bottomY, 1.0, 1.0); vBR /= vBR.w;
     
-    vec3 nLeft   = normalize(cross(vBL.xyz, vTL.xyz));
-    vec3 nRight  = normalize(cross(vTR.xyz, vBR.xyz));
-    vec3 nTop    = normalize(cross(vTL.xyz, vTR.xyz));
-    vec3 nBottom = normalize(cross(vBR.xyz, vBL.xyz));
+    // Precompute rays for this tile
+    vec3 dirTL = normalize(vTL.xyz);
+    vec3 dirTR = normalize(vTR.xyz);
+    vec3 dirBL = normalize(vBL.xyz);
+    vec3 dirBR = normalize(vBR.xyz);
+    vec3 dirC  = normalize(dirTL + dirBR); // Approx center
+
+    vec3 rayOrigin = vec3(0.0);
 
     uint threadCount = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
     uint passCount = (LightCount + threadCount - 1) / threadCount;
@@ -95,52 +211,31 @@ void main() {
             if (type == 1) { // Directional
                 visible = true;
             } 
-            else if (type == 0) { // Point (Frustum Planes)
+            else if (type == 0) { // Point (Ray Sphere Test)
                 float range = light.Position.w;
-                bool inLeft   = dot(nLeft, viewPos) >= -range;
-                bool inRight  = dot(nRight, viewPos) >= -range;
-                bool inTop    = dot(nTop, viewPos) >= -range;
-                bool inBottom = dot(nBottom, viewPos) >= -range;
+                vec3 spherePos = viewPos;
                 
-                visible = inLeft && inRight && inTop && inBottom;
-                if (viewPos.z + range > -0.1) visible = true;
-            }
-            else if (type == 2) { // Spot (Cone Projection)
-                float range = light.Position.w;
-                vec3 viewDir = mat3(View) * light.Direction.xyz;
-                viewDir = normalize(viewDir);
-                
-                vec3 pTip = viewPos;
-                vec3 baseCenter = viewPos + viewDir * range;
-                float baseRadius = range * tan(light.Params.y);
-                
-                vec3 up = vec3(0, 1, 0);
-                if (abs(dot(viewDir, up)) > 0.99) up = vec3(1, 0, 0);
-                vec3 right = normalize(cross(viewDir, up));
-                up = normalize(cross(right, viewDir));
-                
-                vec3 p1 = baseCenter + right * baseRadius;
-                vec3 p2 = baseCenter - right * baseRadius;
-                vec3 p3 = baseCenter + up * baseRadius;
-                vec3 p4 = baseCenter - up * baseRadius;
-                
-                float nearThres = -0.1;
-                if (pTip.z > nearThres || p1.z > nearThres || p2.z > nearThres || p3.z > nearThres || p4.z > nearThres) {
+                if (TestRaySphere(rayOrigin, dirTL, spherePos, range) ||
+                    TestRaySphere(rayOrigin, dirTR, spherePos, range) ||
+                    TestRaySphere(rayOrigin, dirBL, spherePos, range) ||
+                    TestRaySphere(rayOrigin, dirBR, spherePos, range) ||
+                    TestRaySphere(rayOrigin, dirC, spherePos, range)) {
                     visible = true;
-                } else {
-                    vec2 sTip = Project(pTip);
-                    vec2 s1 = Project(p1);
-                    vec2 s2 = Project(p2);
-                    vec2 s3 = Project(p3);
-                    vec2 s4 = Project(p4);
-                    
-                    vec2 minB = min(sTip, min(s1, min(s2, min(s3, s4))));
-                    vec2 maxB = max(sTip, max(s1, max(s2, max(s3, s4))));
-                    
-                    if (maxB.x >= tileMin.x && minB.x <= tileMax.x &&
-                        maxB.y >= tileMin.y && minB.y <= tileMax.y) {
-                        visible = true;
-                    }
+                }
+            }
+            else if (type == 2) { // Spot (Ray Cone Test)
+                float range = light.Position.w;
+                float cosAngle = cos(light.Params.y);
+                
+                vec3 coneApex = viewPos;
+                vec3 coneAxis = normalize(mat3(View) * light.Direction.xyz);
+                
+                if (TestRayCone(rayOrigin, dirTL, coneApex, coneAxis, cosAngle, range) ||
+                    TestRayCone(rayOrigin, dirTR, coneApex, coneAxis, cosAngle, range) ||
+                    TestRayCone(rayOrigin, dirBL, coneApex, coneAxis, cosAngle, range) ||
+                    TestRayCone(rayOrigin, dirBR, coneApex, coneAxis, cosAngle, range) ||
+                    TestRayCone(rayOrigin, dirC, coneApex, coneAxis, cosAngle, range)) {
+                    visible = true;
                 }
             }
             

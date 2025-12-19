@@ -24,7 +24,7 @@ class Program
         //     Console.WriteLine($"No default scene found at '{defaultScenePath}'. Use the editor to import a scene.");
         // }
         
-        var physicsScene = new Whisperleaf.Physics.PhysicsTestScene(renderer);
-        renderer.Run((dt) => physicsScene.Update(renderer));
+        var testScene = new LightPerformanceTestScene(renderer);
+        renderer.Run((dt) => testScene.Update(renderer));
     }
 }

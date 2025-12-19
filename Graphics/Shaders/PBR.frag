@@ -94,64 +94,53 @@ float CalcShadow(int index, vec3 worldPos, vec3 N, vec3 L, vec3 lightPos, float 
     float normalOffset = (0.002 * (1.0 - NdotL) + 0.02 * proximity);
     vec3 biasedWorldPos = worldPos + normalize(N) * normalOffset;
     vec4 posLight = info.viewProj * vec4(biasedWorldPos, 1.0);
-    
+
     vec3 projCoords = posLight.xyz / posLight.w;
-    
+
     if (projCoords.z > 1.0 || projCoords.x < -1.0 || projCoords.x > 1.0 || projCoords.y < -1.0 || projCoords.y > 1.0)
-        return 1.0;
+    return 1.0;
     projCoords.y *= -1;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    
+
     vec2 uv = info.atlasRect.xy + projCoords.xy * info.atlasRect.z;
     float layer = info.atlasRect.w;
     float currentDepth = projCoords.z;
     float bias = 0.0002;
     vec2 minUV = info.atlasRect.xy;
     vec2 maxUV = info.atlasRect.xy + vec2(info.atlasRect.z);
-    
+
     vec2 texelSize = (1.0 / (2048.0 * vec2(info.atlasRect.z)));
     const float PCF_RADIUS = 0.125f;
     float tileRes = 2048.0 * info.atlasRect.z;
     float pcfScale = clamp(tileRes / 512.0, 0.25, 1.0);
     vec2 pcfStep = texelSize * PCF_RADIUS * pcfScale;
-    
-                float visibility = 0.0;
-    
-    
-    
-        for (int x = -1; x <= 1; x++) {
-    
-            for (int y = -1; y <= 1; y++) {
-    
-                vec2 offset = vec2(x, y) * pcfStep;
-    
-                vec2 sampleUV = clamp(uv + offset, minUV + texelSize, maxUV - texelSize);
-    
-                
-    
-                // Use sampler2DArrayShadow for hardware comparison
-    
-                // texture() returns the comparison result (0.0 or 1.0) directly (filtered)
-    
-                float shadowTest = texture(
-    
-                    sampler2DArrayShadow(ShadowMap, ShadowSampler),
-    
-                    vec4(sampleUV, layer, currentDepth - bias)
-    
-                );
-    
-    
-    
-                visibility += shadowTest;
-    
-            }
-    
+
+    float visibility = 0.0;
+
+
+
+    for (int x = -1; x <= 1; x++) {
+
+        for (int y = -1; y <= 1; y++) {
+
+            vec2 offset = vec2(x, y) * pcfStep;
+
+            vec2 sampleUV = clamp(uv + offset, minUV + texelSize, maxUV - texelSize);
+
+
+            // Use sampler2DArrayShadow for hardware comparison
+
+            // texture() returns the comparison result (0.0 or 1.0) directly (filtered)
+
+            float shadowTest = texture(
+            sampler2DArrayShadow(ShadowMap, ShadowSampler),
+            vec4(sampleUV, layer, currentDepth - bias)
+            );
+            visibility += shadowTest;
         }
-    
-        return visibility / 9.0;
-    
     }
+    return visibility / 9.0;
+}
 
 const float PI = 3.14159265359;
 
