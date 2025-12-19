@@ -97,9 +97,11 @@ public class LightUniformBuffer : IDisposable
 
     public ResourceLayout Layout => _layout;
     public ResourceSet ResourceSet => _resourceSet;
+    public DeviceBuffer DataBuffer => _buffer;
     
     public ResourceLayout ParamLayout => _paramLayout;
     public ResourceSet ParamResourceSet => _paramResourceSet;
+    public DeviceBuffer ParamBuffer => _paramBuffer;
 
     public void Dispose()
     {

@@ -83,11 +83,11 @@ public class ImmediateRenderer : IDisposable
         DrawLine(p0, p4, color); DrawLine(p1, p5, color); DrawLine(p2, p6, color); DrawLine(p3, p7, color);
     }
 
-    public void Render(CommandList cl, Camera camera)
+    public void Render(CommandList cl, Camera camera, Vector2 screenSize, int debugMode = 0)
     {
         if (_vertices.Count == 0) return;
 
-        _cameraBuffer.Update(_gd, camera);
+        _cameraBuffer.Update(_gd, camera, screenSize, debugMode);
 
         EnsureBufferSize((uint)_vertices.Count);
         _gd.UpdateBuffer(_vertexBuffer, 0, _vertices.ToArray());

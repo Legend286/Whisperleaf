@@ -12,9 +12,7 @@ class Program
     static void Main(string[] args)
     {
         var window = new Window(1280, 720, $"Whisperleaf Renderer");
-        var camera = new Camera(window.AspectRatio);
         var renderer = new Renderer(window);
-        renderer.SetCamera(camera);
 
         // var defaultScenePath = Path.Combine("Resources", "Scenes", "Bistro_Godot.wlscene");
         // if (File.Exists(defaultScenePath))

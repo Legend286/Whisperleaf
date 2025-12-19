@@ -25,7 +25,9 @@ public class EditorManager : IDisposable {
 
     // Editor windows
     private readonly AssetBrowserWindow _assetBrowser;
-    private readonly SceneInspectorWindow _sceneInspector;
+    private readonly SceneOutlinerWindow _sceneOutliner;
+    private readonly InspectorWindow _inspector;
+    private readonly StatsWindow _statsWindow;
     private readonly ImportWizardWindow _importWizard;
     private readonly FileDialogWindow _fileDialog;
 
@@ -36,6 +38,8 @@ public class EditorManager : IDisposable {
     public event Action<SceneNode?>? SceneNodeSelected;
 
     public event Action<OPERATION>? GizmoOperationChanged;
+    
+    public event Action? RequestRefresh;
 
     public OPERATION GizmoOperation { get; private set; } = OPERATION.TRANSLATE;
 
@@ -43,6 +47,7 @@ public class EditorManager : IDisposable {
     public bool ShowDynamicBVH { get; set; }
 
     public bool ShowSelection { get; set; } = true;
+    public bool ShowLightHeatmap { get; set; }
 
     public EditorManager(GraphicsDevice gd, Sdl2Window window) {
         _gd = gd;
@@ -55,12 +60,16 @@ public class EditorManager : IDisposable {
 
         // Create editor windows
         _assetBrowser = new AssetBrowserWindow();
-        _sceneInspector = new SceneInspectorWindow();
+        _sceneOutliner = new SceneOutlinerWindow();
+        _inspector = new InspectorWindow();
+        _statsWindow = new StatsWindow();
         _importWizard = new ImportWizardWindow();
         _fileDialog = new FileDialogWindow();
 
         _windows.Add(_assetBrowser);
-        _windows.Add(_sceneInspector);
+        _windows.Add(_sceneOutliner);
+        _windows.Add(_inspector);
+        _windows.Add(_statsWindow);
         _windows.Add(_importWizard);
         _windows.Add(_fileDialog);
 
@@ -68,15 +77,23 @@ public class EditorManager : IDisposable {
         _assetBrowser.OnSceneSelected += OnSceneLoaded;
         _importWizard.OnImportComplete += OnImportComplete;
         window.DragDrop += OnWindowDragDrop;
-        _sceneInspector.NodeSelected += node => SceneNodeSelected?.Invoke(node);
-        _sceneInspector.GizmoOperationChanged += OnGizmoOperationChanged;
-        GizmoOperation = _sceneInspector.CurrentOperation;
+        
+        _sceneOutliner.NodeSelected += node => {
+            _inspector.SetSelectedNode(node);
+            SceneNodeSelected?.Invoke(node);
+        };
+        
+        _inspector.GizmoOperationChanged += OnGizmoOperationChanged;
+        _inspector.NodePropertyChanged += () => RequestRefresh?.Invoke();
+        GizmoOperation = _inspector.CurrentOperation;
     }
 
     public void SetScene(SceneAsset scene)
     {
         _currentScene = scene;
-        _sceneInspector.SetScene(scene);
+        _sceneOutliner.SetScene(scene);
+        _statsWindow.SetScene(scene);
+        _inspector.SetSelectedNode(null);
         _assetBrowser.IsOpen = true;
     }
 
@@ -116,8 +133,18 @@ public class EditorManager : IDisposable {
         DrawSaveSceneWindow();
     }
 
+    public void AddWindow(EditorWindow window)
+    {
+        _windows.Add(window);
+    }
+    
+    public IntPtr GetTextureBinding(Texture texture)
+    {
+        return _imguiController.GetOrCreateImGuiBinding(_gd.ResourceFactory, texture);
+    }
+
     public void UpdateStats(RenderStats stats) {
-        _sceneInspector.Stats = stats;
+        _statsWindow.Stats = stats;
     }
 
     public void Render(CommandList cl) {
@@ -201,13 +228,36 @@ public class EditorManager : IDisposable {
 
             if (ImGui.BeginMenu("Windows")) {
                 bool assetBrowserOpen = _assetBrowser.IsOpen;
-                bool sceneInspectorOpen = _sceneInspector.IsOpen;
-
+                bool outlinerOpen = _sceneOutliner.IsOpen;
+                bool inspectorOpen = _inspector.IsOpen;
+                bool statsOpen = _statsWindow.IsOpen;
+                
+                // Assuming ViewportWindow is handled externally or we need to find it?
+                // ViewportWindow is added via AddWindow() in Renderer, but EditorManager stores it in _windows list.
+                // We should probably expose it or iterate windows?
+                // For now, let's just loop through windows to find ViewportWindow or make it a field if we can't.
+                // But AddWindow is generic.
+                
                 if (ImGui.MenuItem("Asset Browser", null, ref assetBrowserOpen))
                     _assetBrowser.IsOpen = assetBrowserOpen;
 
-                if (ImGui.MenuItem("Scene Inspector", null, ref sceneInspectorOpen))
-                    _sceneInspector.IsOpen = sceneInspectorOpen;
+                if (ImGui.MenuItem("Scene Outliner", null, ref outlinerOpen))
+                    _sceneOutliner.IsOpen = outlinerOpen;
+                    
+                if (ImGui.MenuItem("Inspector", null, ref inspectorOpen))
+                    _inspector.IsOpen = inspectorOpen;
+
+                if (ImGui.MenuItem("Statistics", null, ref statsOpen))
+                    _statsWindow.IsOpen = statsOpen;
+
+                // Find ViewportWindow
+                var viewport = _windows.OfType<ViewportWindow>().FirstOrDefault();
+                if (viewport != null)
+                {
+                    bool viewportOpen = viewport.IsOpen;
+                    if (ImGui.MenuItem("Game View", null, ref viewportOpen))
+                        viewport.IsOpen = viewportOpen;
+                }
 
                 ImGui.EndMenu();
             }
@@ -217,9 +267,11 @@ public class EditorManager : IDisposable {
                 bool showBvh = ShowBVH;
                 bool showDynBvh = ShowDynamicBVH;
                 bool showSel = ShowSelection;
+                bool showHeatmap = ShowLightHeatmap;
                 if (ImGui.MenuItem("Show Static BVH", null, ref showBvh)) ShowBVH = showBvh;
                 if (ImGui.MenuItem("Show Dynamic BVH", null, ref showDynBvh)) ShowDynamicBVH = showDynBvh;
                 if (ImGui.MenuItem("Show Selection", null, ref showSel)) ShowSelection = showSel;
+                if (ImGui.MenuItem("Show Light Heatmap", null, ref showHeatmap)) ShowLightHeatmap = showHeatmap;
                 ImGui.EndMenu();
             }
 
@@ -404,14 +456,16 @@ public class EditorManager : IDisposable {
         }
         else {
             _currentScene = scene;
-            _sceneInspector.SetScene(scene);
+            _sceneOutliner.SetScene(scene);
+            _statsWindow.SetScene(scene);
             SceneRequested?.Invoke(scene, false);
         }
     }
 
     private void OnImportComplete(SceneAsset scene) {
         _currentScene = scene;
-        _sceneInspector.SetScene(scene);
+        _sceneOutliner.SetScene(scene);
+        _statsWindow.SetScene(scene);
         _assetBrowser.IsOpen = true; // Refresh browser
         SceneRequested?.Invoke(scene, false);
     }
@@ -419,7 +473,8 @@ public class EditorManager : IDisposable {
     private void CreateLight(int type) {
         if (_currentScene == null) {
             _currentScene = new SceneAsset { Name = "Untitled Scene" };
-            _sceneInspector.SetScene(_currentScene);
+            _sceneOutliner.SetScene(_currentScene);
+            _statsWindow.SetScene(_currentScene);
         }
 
 

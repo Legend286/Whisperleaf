@@ -13,6 +13,8 @@ public class CameraController
     private float _speed = 20.0f;
     private float _mouseSensitivity = 0.0025f;
 
+    public bool InputEnabled { get; set; } = true;
+
     public CameraController(Camera camera, Window window)
     {
         _camera = camera;
@@ -21,17 +23,17 @@ public class CameraController
     private bool skipNextDelta = false;
 
     private bool initialCapture = true;
+    private (int X, int Y) _lockPosition;
+
     public void Update(float deltaTime)
     {
-        if (InputManager.IsButtonDown(MouseButton.Right))
+        if (InputEnabled && InputManager.IsButtonDown(MouseButton.Right))
         {
             _window.ShowCursor(false);
-            int centerX = _window.Width / 2;
-            int centerY = _window.Height / 2;
 
             if (initialCapture)
             {
-                _window.SetMousePosition(centerX, centerY);
+                _lockPosition = InputManager.MousePosition;
                 initialCapture = false;
                 skipNextDelta = true;
             }
@@ -63,21 +65,16 @@ public class CameraController
     private (int X, int Y) currentMouse = (0, 0);
     private void HandleMouse()
     {
-        var mouseDelta = InputManager.MouseDelta;
-
         if (skipNextDelta)
         { 
-            // swallow the warp delta
             skipNextDelta = false;
             return;
         }
         
         currentMouse = InputManager.MousePosition;
-        int centerX = _window.Width / 2;
-        int centerY = _window.Height / 2;
-
-        int dx = currentMouse.X - centerX;
-        int dy = currentMouse.Y - centerY;
+        
+        int dx = currentMouse.X - _lockPosition.X;
+        int dy = currentMouse.Y - _lockPosition.Y;
 
         if (dx != 0 || dy != 0)
         {
@@ -85,8 +82,8 @@ public class CameraController
             var pitch = Quaternion.CreateFromAxisAngle(_camera.GetRight(), dy * -_mouseSensitivity);
             _camera.Orientation = Quaternion.Normalize(yaw * pitch * _camera.Orientation);
 
-            // reset cursor back to center
-            _window.SetMousePosition(centerX, centerY);
+            // reset cursor back to lock position
+            _window.SetMousePosition(_lockPosition.X, _lockPosition.Y);
         }
     }
 }

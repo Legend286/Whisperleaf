@@ -1,0 +1,166 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+struct LightUniform {
+    vec4 Position;  // xyz=pos, w=range
+    vec4 Color;     // xyz=color, w=intensity
+    vec4 Direction; // xyz=dir, w=type
+    vec4 Params;    // x=inner, y=outer, z=shadow, w=padding
+};
+
+layout(std140, set = 0, binding = 0) uniform CameraBuffer {
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    vec3 CameraPosition;
+    float Padding;
+    vec2 ScreenSize;
+    int DebugMode;
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer LightDataBuffer {
+    LightUniform Lights[];
+};
+
+layout(std140, set = 0, binding = 2) uniform LightParams {
+    uint LightCount;
+};
+
+layout(set = 0, binding = 3, rg32ui) uniform writeonly uimage2D LightGrid;
+
+layout(std430, set = 0, binding = 4) buffer LightIndexListBuffer {
+    uint LightIndices[];
+};
+
+layout(std430, set = 0, binding = 5) buffer LightIndexCounter {
+    uint Counter;
+};
+
+shared uint s_TileLightIndices[1024];
+shared uint s_TileLightCount;
+
+vec2 Project(vec3 viewPos) {
+    vec4 clipPos = Projection * vec4(viewPos, 1.0);
+    vec3 ndcPos = clipPos.xyz / clipPos.w;
+    ndcPos.y = -ndcPos.y; // Flip Y for screen/tile coords
+    return (ndcPos.xy * 0.5 + 0.5) * ScreenSize;
+}
+
+void main() {
+    if (gl_LocalInvocationIndex == 0) {
+        s_TileLightCount = 0;
+    }
+    barrier();
+
+    uint tileX = gl_WorkGroupID.x;
+    uint tileY = gl_WorkGroupID.y;
+    uint tileSize = 16;
+    
+    vec2 tileMin = vec2(tileX, tileY) * float(tileSize);
+    vec2 tileMax = vec2(tileX + 1, tileY + 1) * float(tileSize);
+    
+    // Frustum Planes for Point Lights
+    vec2 invScreenSize = 1.0 / ScreenSize;
+    float minX = (tileMin.x * invScreenSize.x) * 2.0 - 1.0;
+    float maxX = (tileMax.x * invScreenSize.x) * 2.0 - 1.0;
+    float topY = 1.0 - (tileMin.y * invScreenSize.y) * 2.0;
+    float bottomY = 1.0 - (tileMax.y * invScreenSize.y) * 2.0;
+    
+    mat4 invProj = inverse(Projection);
+    vec4 vTL = invProj * vec4(minX, topY, 1.0, 1.0); vTL /= vTL.w;
+    vec4 vTR = invProj * vec4(maxX, topY, 1.0, 1.0); vTR /= vTR.w;
+    vec4 vBL = invProj * vec4(minX, bottomY, 1.0, 1.0); vBL /= vBL.w;
+    vec4 vBR = invProj * vec4(maxX, bottomY, 1.0, 1.0); vBR /= vBR.w;
+    
+    vec3 nLeft   = normalize(cross(vBL.xyz, vTL.xyz));
+    vec3 nRight  = normalize(cross(vTR.xyz, vBR.xyz));
+    vec3 nTop    = normalize(cross(vTL.xyz, vTR.xyz));
+    vec3 nBottom = normalize(cross(vBR.xyz, vBL.xyz));
+
+    uint threadCount = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+    uint passCount = (LightCount + threadCount - 1) / threadCount;
+
+    for (uint i = 0; i < passCount; i++) {
+        uint lightIdx = i * threadCount + gl_LocalInvocationIndex;
+        
+        if (lightIdx < LightCount) {
+            LightUniform light = Lights[lightIdx];
+            vec4 viewPos4 = View * vec4(light.Position.xyz, 1.0);
+            vec3 viewPos = viewPos4.xyz;
+            bool visible = false;
+            
+            int type = int(light.Direction.w);
+
+            if (type == 1) { // Directional
+                visible = true;
+            } 
+            else if (type == 0) { // Point (Frustum Planes)
+                float range = light.Position.w;
+                bool inLeft   = dot(nLeft, viewPos) >= -range;
+                bool inRight  = dot(nRight, viewPos) >= -range;
+                bool inTop    = dot(nTop, viewPos) >= -range;
+                bool inBottom = dot(nBottom, viewPos) >= -range;
+                
+                visible = inLeft && inRight && inTop && inBottom;
+                if (viewPos.z + range > -0.1) visible = true;
+            }
+            else if (type == 2) { // Spot (Cone Projection)
+                float range = light.Position.w;
+                vec3 viewDir = mat3(View) * light.Direction.xyz;
+                viewDir = normalize(viewDir);
+                
+                vec3 pTip = viewPos;
+                vec3 baseCenter = viewPos + viewDir * range;
+                float baseRadius = range * tan(light.Params.y);
+                
+                vec3 up = vec3(0, 1, 0);
+                if (abs(dot(viewDir, up)) > 0.99) up = vec3(1, 0, 0);
+                vec3 right = normalize(cross(viewDir, up));
+                up = normalize(cross(right, viewDir));
+                
+                vec3 p1 = baseCenter + right * baseRadius;
+                vec3 p2 = baseCenter - right * baseRadius;
+                vec3 p3 = baseCenter + up * baseRadius;
+                vec3 p4 = baseCenter - up * baseRadius;
+                
+                float nearThres = -0.1;
+                if (pTip.z > nearThres || p1.z > nearThres || p2.z > nearThres || p3.z > nearThres || p4.z > nearThres) {
+                    visible = true;
+                } else {
+                    vec2 sTip = Project(pTip);
+                    vec2 s1 = Project(p1);
+                    vec2 s2 = Project(p2);
+                    vec2 s3 = Project(p3);
+                    vec2 s4 = Project(p4);
+                    
+                    vec2 minB = min(sTip, min(s1, min(s2, min(s3, s4))));
+                    vec2 maxB = max(sTip, max(s1, max(s2, max(s3, s4))));
+                    
+                    if (maxB.x >= tileMin.x && minB.x <= tileMax.x &&
+                        maxB.y >= tileMin.y && minB.y <= tileMax.y) {
+                        visible = true;
+                    }
+                }
+            }
+            
+            if (visible) {
+                uint index = atomicAdd(s_TileLightCount, 1);
+                if (index < 1024) {
+                    s_TileLightIndices[index] = lightIdx;
+                }
+            }
+        }
+    }
+    
+    barrier();
+    
+    if (gl_LocalInvocationIndex == 0) {
+        uint count = s_TileLightCount;
+        uint offset = atomicAdd(Counter, count);
+        imageStore(LightGrid, ivec2(tileX, tileY), uvec4(offset, count, 0, 0));
+        for (uint i = 0; i < count; i++) {
+            LightIndices[offset + i] = s_TileLightIndices[i];
+        }
+    }
+}

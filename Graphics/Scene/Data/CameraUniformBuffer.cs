@@ -24,18 +24,19 @@ namespace Whisperleaf.Graphics.Scene.Data
             _resourceSet = factory.CreateResourceSet(new ResourceSetDescription(_layout, _buffer));
         }
 
-        public void Update(GraphicsDevice gd, Camera camera)
+        public void Update(GraphicsDevice gd, Camera camera, Vector2 screenSize, int debugMode)
         {
             var view = camera.GetViewMatrix();
             var proj = camera.GetProjectionMatrix();
             var camPos = camera.Position;
 
-            var data = new CameraUniform(view, proj, camPos);
+            var data = new CameraUniform(view, proj, camPos, screenSize, debugMode);
             gd.UpdateBuffer(_buffer, 0, ref data);
         }
 
         public ResourceLayout Layout => _layout;
         public ResourceSet ResourceSet => _resourceSet;
+        public DeviceBuffer Buffer => _buffer;
 
         public void Dispose()
         {

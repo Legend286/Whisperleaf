@@ -5,6 +5,7 @@ using Veldrid;
 using Whisperleaf.AssetPipeline;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor;
+using Whisperleaf.Editor.Windows;
 using Whisperleaf.Graphics.Data;
 using Whisperleaf.Graphics.Immediate;
 using Whisperleaf.Graphics.RenderPasses;
@@ -27,15 +28,24 @@ public class Renderer
     private readonly ShadowAtlas _shadowAtlas;
     private readonly ShadowPass _shadowPass;
     
+    // Game View Resources
+    private Framebuffer _viewFramebuffer;
+    private Texture _viewTexture;
+    private Texture _viewDepthTexture;
+    private readonly ViewportWindow _viewportWindow;
+    public uint ViewportWidth { get; private set; }
+    public uint ViewportHeight { get; private set; }
+    
     public bool ShowBVH { get; set; }
     public bool ShowDynamicBVH { get; set; }
     public bool ShowSelectionBounds { get; set; } = true;
+    public bool ShowLightHeatmap { get; set; }
     
     public SceneNode? SelectedNode => _selectedNode;
     public bool IsManipulating => ImGuizmo.IsUsing();
+
+    public Camera MainCamera => _viewportWindow.Camera;
     
-    private Camera? _camera;
-    private CameraController? _cameraController;
     private SceneNode? _selectedNode;
     private OPERATION _gizmoOperation;
     private bool _wasUsingGizmo;
@@ -60,6 +70,17 @@ public class Renderer
 
         _editorManager.SceneRequested += OnSceneRequested;
         _window.WindowResized += _editorManager.WindowResized;
+        
+        // Initialize Game View
+        ViewportWidth = (uint)_window.Width;
+        ViewportHeight = (uint)_window.Height;
+        if (ViewportWidth == 0) ViewportWidth = 1280;
+        if (ViewportHeight == 0) ViewportHeight = 720;
+        
+        ResizeViewport(ViewportWidth, ViewportHeight);
+        
+        _viewportWindow = new ViewportWindow(this, _window);
+        _editorManager.AddWindow(_viewportWindow);
     }
 
     public void AddPass(IRenderPass pass) => _passes.Add(pass);
@@ -68,10 +89,40 @@ public class Renderer
 
     public void AddCustomMesh(string name, MeshData data) => _scenePass.AddCustomMesh(name, data);
 
-    public void SetCamera(Camera camera)
+    public void RefreshScene() => _scenePass.RefreshStructure();
+
+    public void ResizeViewport(uint width, uint height)
     {
-        _camera = camera;
-        _cameraController = new CameraController(_camera, _window);
+        _window.graphicsDevice.WaitForIdle();
+        ViewportWidth = width;
+        ViewportHeight = height;
+
+        _viewTexture?.Dispose();
+        _viewDepthTexture?.Dispose();
+        _viewFramebuffer?.Dispose();
+
+        var factory = _window.graphicsDevice.ResourceFactory;
+        
+        var swapchainFormat = _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.ColorAttachments[0].Format;
+        var depthFormat = _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.DepthAttachment.Value.Format;
+        
+        _viewTexture = factory.CreateTexture(TextureDescription.Texture2D(
+            width, height, 1, 1, 
+            swapchainFormat, 
+            TextureUsage.RenderTarget | TextureUsage.Sampled));
+            
+        _viewDepthTexture = factory.CreateTexture(TextureDescription.Texture2D(
+            width, height, 1, 1, 
+            depthFormat, 
+            TextureUsage.DepthStencil));
+            
+        _viewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(_viewDepthTexture, _viewTexture));
+    }
+    
+    public IntPtr GetGameViewTextureId()
+    {
+        if (_viewTexture == null) return IntPtr.Zero;
+        return _editorManager.GetTextureBinding(_viewTexture);
     }
 
     public void LoadScene(SceneAsset scene)
@@ -111,21 +162,35 @@ public class Renderer
             
             onUpdate?.Invoke(Time.DeltaTime);
 
-            _cameraController?.Update(Time.DeltaTime);
+            ShowLightHeatmap = _editorManager.ShowLightHeatmap;
+
+            _viewportWindow.Update(Time.DeltaTime);
+            
             InputManager.Update(snapshot);
             _editorManager.Update(Time.DeltaTime, snapshot);
             
-            if (_camera != null)
-            {
-                // Update Shadow Allocations
-                // We convert IReadOnlyList to List or just pass generic? 
-                // ShadowAtlas.UpdateAllocations takes List<SceneNode>.
-                // _scenePass.LightNodes is IReadOnlyList.
-                // We create a new list for now.
-                var lights = new List<SceneNode>(_scenePass.LightNodes);
-                _shadowAtlas.UpdateAllocations(lights, _camera);
-            }
+            var camera = _viewportWindow.Camera;
+            var screenSize = new Vector2(ViewportWidth, ViewportHeight);
+            int debugMode = ShowLightHeatmap ? 1 : 0;
 
+            if (camera != null)
+            {
+                _scenePass.Update(camera);
+                
+                var lights = new List<SceneNode>(_scenePass.VisibleLights);
+                _shadowAtlas.UpdateAllocations(lights, camera, _scenePass);
+            }
+            
+            _cl.Begin();
+            
+            if (camera != null)
+            {
+                _scenePass.PrepareRender(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
+            }
+            
+            _cl.End();
+            _window.graphicsDevice.SubmitCommands(_cl);
+            
             _cl.Begin();
             
             // Clear Shadow Maps
@@ -136,19 +201,19 @@ public class Renderer
             }
 
             // Render Shadows
-            if (_camera != null)
+            if (camera != null)
             {
                 _shadowPass.Render(_window.graphicsDevice, _cl, _shadowAtlas, _scenePass);
             }
             
-            // Main Pass
-            _cl.SetFramebuffer(_window.graphicsDevice.MainSwapchain.Framebuffer);
+            // Main Pass - Render to Game View Framebuffer
+            _cl.SetFramebuffer(_viewFramebuffer);
             _cl.ClearColorTarget(0, RgbaFloat.Black);
             _cl.ClearDepthStencil(1.0f);
             
             foreach (var pass in _passes)
             {
-                pass.Render(_window.graphicsDevice, _cl, _camera);
+                pass.Render(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
             }
 
             var stats = new Editor.RenderStats
@@ -170,9 +235,13 @@ public class Renderer
             _editorManager.UpdateStats(stats);
 
             _scenePass.DrawDebug(_immediateRenderer, _editorManager.ShowBVH, _editorManager.ShowDynamicBVH, _editorManager.ShowSelection);
-            if (_camera != null) _immediateRenderer.Render(_cl, _camera);
+            if (camera != null) _immediateRenderer.Render(_cl, camera, screenSize);
 
-            HandleGizmo();
+            // Render ImGui to Swapchain
+            _cl.SetFramebuffer(_window.graphicsDevice.MainSwapchain.Framebuffer);
+            _cl.ClearColorTarget(0, RgbaFloat.Black);
+            // Note: ImGui clears its own depth if needed or ignores it. We don't necessarily need to clear depth here if ImGui is just overlay.
+
             _editorManager.Render(_cl);
 
             _cl.End();
@@ -188,9 +257,10 @@ public class Renderer
         _scenePass.SetSelectedNode(node);
     }
 
-    private void HandleGizmo()
+    public void DrawGizmo()
     {
-        if (_camera == null || _selectedNode == null)
+        var camera = _viewportWindow.Camera;
+        if (camera == null || _selectedNode == null)
         {
             return;
         }
@@ -200,13 +270,12 @@ public class Renderer
             return;
         }
 
-        var view = _camera.ViewMatrix;
-        var projection = _camera.ProjectionMatrix;
+        var view = camera.ViewMatrix;
+        var projection = camera.ProjectionMatrix;
 
         ImGuizmo.SetOrthographic(false);
-        var viewport = ImGui.GetMainViewport();
-       
-        ImGuizmo.SetRect(0,0,_window.Width, _window.Height);
+        ImGuizmo.SetDrawlist();
+        ImGuizmo.SetRect(_viewportWindow.Position.X, _viewportWindow.Position.Y, _viewportWindow.Size.X, _viewportWindow.Size.Y);
         ImGuizmo.Manipulate(ref view.M11, ref projection.M11, _gizmoOperation, MODE.WORLD, ref gizmoTransform.M11);
 
         bool isUsing = ImGuizmo.IsUsing();

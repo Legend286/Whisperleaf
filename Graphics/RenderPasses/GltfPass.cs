@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Veldrid;
+using Veldrid.SPIRV;
 using Whisperleaf.AssetPipeline;
 using Whisperleaf.AssetPipeline.Cache;
 using Whisperleaf.AssetPipeline.Scene;
@@ -12,6 +13,7 @@ using Whisperleaf.Graphics.Immediate;
 using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Graphics.Scene.Data;
 using Whisperleaf.Graphics.Shadows;
+using TextureType = Veldrid.TextureType;
 
 namespace Whisperleaf.Graphics.RenderPasses;
 
@@ -39,28 +41,55 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private bool _loggedFirstInstance;
     private readonly List<ModelUniform> _visibleTransforms = new();
     private readonly List<SceneNode> _lightNodes = new();
+    private readonly List<SceneNode> _visibleLights = new();
     private readonly List<LightUniform> _manualLights = new();
     private SceneNode? _selectedNode;
-    
+
+    // Forward+ Resources
+    private Texture _lightGridTexture;
+    private TextureView _lightGridView;
+    private TextureView _lightGridSampledView;
+    private DeviceBuffer _lightIndexListBuffer;
+    private DeviceBuffer _lightIndexCounterBuffer;
+    private Pipeline _lightCullPipeline;
+    private ResourceSet _lightCullResourceSet;
+    private ResourceLayout _lightCullLayout;
+    private ResourceLayout _lightCullReadLayout;
+    private ResourceSet _lightCullReadResourceSet;
+    private Vector2 _lastScreenSize = Vector2.Zero;
+
     public ShadowAtlas? ShadowAtlas { get; set; }
 
     // Statistics
     public int DrawCalls { get; private set; }
+
     public int RenderedInstances { get; private set; }
+
     public long RenderedTriangles { get; private set; }
+
     public long RenderedVertices { get; private set; }
+
     public SceneBVH.BVHStats CullingStats { get; private set; }
+
     public int UniqueMaterialCount => _materials.Count;
-    
+
     public int TotalInstances => _meshInstances.Count;
+
     public int SourceMeshes => _meshCache.Count;
+
     public long SourceVertices { get; private set; }
+
     public long SourceIndices { get; private set; }
+
     public long TotalSceneTriangles { get; private set; }
+
     public bool IsGizmoActive { get; set; }
 
     public IReadOnlyList<MeshInstance> MeshInstances => _meshInstances;
+
     public IReadOnlyList<SceneNode> LightNodes => _lightNodes;
+
+    public IReadOnlyList<SceneNode> VisibleLights => _visibleLights;
 
     public struct MeshInstance {
         public readonly MeshGpu Mesh;
@@ -85,6 +114,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _lightBuffer = new LightUniformBuffer(gd);
         _shadowDataBuffer = new ShadowDataBuffer(gd);
 
+        InitializeLightCulling();
+
         var vertexLayout = new VertexLayoutDescription(
             new VertexElementDescription("v_Position", VertexElementSemantic.Position, VertexElementFormat.Float3),
             new VertexElementDescription("v_Normal", VertexElementSemantic.Normal, VertexElementFormat.Float3),
@@ -108,7 +139,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 _lightBuffer.Layout,
                 _lightBuffer.ParamLayout,
                 _shadowDataBuffer.Layout,
-                shadowAtlasLayout
+                shadowAtlasLayout,
+                _lightCullReadLayout
             }
         );
     }
@@ -121,8 +153,100 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _selectedNode = node;
     }
 
+    private void InitializeLightCulling()
+    {
+        var factory = _gd.ResourceFactory;
+
+        _lightCullLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
+            new ResourceLayoutElementDescription("CameraBuffer", ResourceKind.UniformBuffer, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("LightData", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("LightParams", ResourceKind.UniformBuffer, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("LightGrid", ResourceKind.TextureReadWrite, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("LightIndices", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("Counter", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute)
+        ));
+
+        _lightCullReadLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
+            new ResourceLayoutElementDescription("LightGrid", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("LightGridSampler", ResourceKind.Sampler, ShaderStages.Fragment),
+            new ResourceLayoutElementDescription("LightIndices", ResourceKind.StructuredBufferReadOnly, ShaderStages.Fragment)
+        ));
+
+        var computeShader = ShaderCache.GetShader(_gd, ShaderStages.Compute, "Graphics/Shaders/LightCulling.comp");
+        var pd = new ComputePipelineDescription(computeShader, _lightCullLayout, 16, 16, 1);
+        _lightCullPipeline = factory.CreateComputePipeline(pd);
+        
+        ResizeLightCullingResources(1280, 720);
+    }
+
+    private void ResizeLightCullingResources(uint width, uint height)
+    {
+        if (_lastScreenSize.X == width && _lastScreenSize.Y == height) return;
+        _lastScreenSize = new Vector2(width, height);
+
+        var factory = _gd.ResourceFactory;
+
+        _lightGridTexture?.Dispose();
+        _lightGridView?.Dispose();
+        _lightGridSampledView?.Dispose();
+        _lightIndexListBuffer?.Dispose();
+        _lightIndexCounterBuffer?.Dispose();
+        _lightCullResourceSet?.Dispose();
+        _lightCullReadResourceSet?.Dispose();
+
+        uint tilesX = (width + 15) / 16;
+        uint tilesY = (height + 15) / 16;
+
+        _lightGridTexture = factory.CreateTexture(new TextureDescription(
+            tilesX, tilesY, 1, 1, 1,
+            PixelFormat.R32_G32_UInt, 
+            TextureUsage.Storage | TextureUsage.Sampled, 
+            TextureType.Texture2D));
+
+        _lightGridView = factory.CreateTextureView(_lightGridTexture);
+        _lightGridSampledView = factory.CreateTextureView(_lightGridTexture);
+
+        uint maxLightsPerTile = 256;
+        uint totalIndices = tilesX * tilesY * maxLightsPerTile;
+        _lightIndexListBuffer = factory.CreateBuffer(new BufferDescription(totalIndices * 4, BufferUsage.StructuredBufferReadWrite, 4));
+
+        _lightIndexCounterBuffer = factory.CreateBuffer(new BufferDescription(4, BufferUsage.StructuredBufferReadWrite, 4));
+
+        _lightCullResourceSet = factory.CreateResourceSet(new ResourceSetDescription(
+            _lightCullLayout,
+            _cameraBuffer.Buffer,
+            _lightBuffer.DataBuffer,
+            _lightBuffer.ParamBuffer,
+            _lightGridView,
+            _lightIndexListBuffer,
+            _lightIndexCounterBuffer
+        ));
+
+        _lightCullReadResourceSet = factory.CreateResourceSet(new ResourceSetDescription(
+            _lightCullReadLayout,
+            _lightGridSampledView,
+            _gd.PointSampler,
+            _lightIndexListBuffer
+        ));
+    }
+
+    private void CullLights(CommandList cl)
+    {
+        cl.UpdateBuffer(_lightIndexCounterBuffer, 0, 0u);
+        
+        cl.SetPipeline(_lightCullPipeline);
+        cl.SetComputeResourceSet(0, _lightCullResourceSet);
+        
+        uint tilesX = (uint)(_lastScreenSize.X + 15) / 16;
+        uint tilesY = (uint)(_lastScreenSize.Y + 15) / 16;
+        
+        cl.Dispatch(tilesX, tilesY, 1);
+    }
+
+    public void RefreshStructure() => SortAndUploadInstances();
+
     public void RebuildBVH() {
-        if (_meshInstances.Count == 0) return;
+        if (_meshInstances.Count == 0 && _lightNodes.Count == 0) return;
 
         // Rebuild static BVH only if explicitly requested (e.g. gizmo usage)
         BuildBVH(_staticBvh, _staticIndices);
@@ -132,129 +256,181 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         BuildBVH(_dynamicBvh, _dynamicIndices);
     }
 
-    private void BuildBVH(SceneBVH bvh, List<int> indices)
-    {
+    private void BuildBVH(SceneBVH bvh, List<int> indices) {
         if (indices.Count == 0) return;
-        
-        bvh.Build(indices, (i) => {
-            var inst = _meshInstances[i];
-            var mesh = inst.Mesh;
-            if (_nodeWorldTransforms.TryGetValue(inst.Node, out var world)) {
-                // Transform AABB to world
-                var center = (mesh.AABBMin + mesh.AABBMax) * 0.5f;
-                var extents = (mesh.AABBMax - mesh.AABBMin) * 0.5f;
-                
-                var worldCenter = Vector3.Transform(center, world);
-                
-                var absM11 = Math.Abs(world.M11); var absM12 = Math.Abs(world.M12); var absM13 = Math.Abs(world.M13);
-                var absM21 = Math.Abs(world.M21); var absM22 = Math.Abs(world.M22); var absM23 = Math.Abs(world.M23);
-                var absM31 = Math.Abs(world.M31); var absM32 = Math.Abs(world.M32); var absM33 = Math.Abs(world.M33);
-                
-                float newEx = absM11 * extents.X + absM21 * extents.Y + absM31 * extents.Z;
-                float newEy = absM12 * extents.X + absM22 * extents.Y + absM32 * extents.Z;
-                float newEz = absM13 * extents.X + absM23 * extents.Y + absM33 * extents.Z;
-                
-                var worldMin = new Vector3(worldCenter.X - newEx, worldCenter.Y - newEy, worldCenter.Z - newEz);
-                var worldMax = new Vector3(worldCenter.X + newEx, worldCenter.Y + newEy, worldCenter.Z + newEz);
-                
-                return (worldMin, worldMax);
+
+        bvh.Build(indices, (i) =>
+        {
+            // Check if mesh or light
+            if (i < _meshInstances.Count) {
+                var inst = _meshInstances[i];
+
+                if (!inst.Node.IsVisible) return (new Vector3(float.MaxValue), new Vector3(float.MinValue));
+
+                var mesh = inst.Mesh;
+
+                if (_nodeWorldTransforms.TryGetValue(inst.Node, out var world)) {
+                    return GetWorldAABB(mesh, world);
+                }
             }
+            else {
+                int lightIndex = i - _meshInstances.Count;
+
+                if (lightIndex >= 0 && lightIndex < _lightNodes.Count) {
+                    var node = _lightNodes[lightIndex];
+
+                    if (!node.IsVisible) return (new Vector3(float.MaxValue), new Vector3(float.MinValue));
+
+                    if (_nodeWorldTransforms.TryGetValue(node, out var world)) {
+                        return GetLightAABB(node, world);
+                    }
+                }
+            }
+
+
             return (new Vector3(-100000), new Vector3(100000));
         });
     }
 
-    public void DrawDebug(ImmediateRenderer renderer, bool showBVH, bool showDynamicBVH, bool showSelection)
-    {
-        if (showBVH)
-        {
+    private (Vector3 Min, Vector3 Max) GetLightAABB(SceneNode node, Matrix4x4 world) {
+        var light = node.Light;
+
+        if (light == null) return (Vector3.Zero, Vector3.Zero);
+
+        var pos = world.Translation;
+        float range = light.Range;
+
+        if (light.Type == 0) {
+            // Point
+            return (pos - new Vector3(range), pos + new Vector3(range));
+        }
+        else if (light.Type == 2) {
+            // Spot
+            // AABB of cone
+            var dir = Vector3.TransformNormal(new Vector3(0, 0, -1), world);
+
+            // Base circle center
+            var C = pos + dir * range;
+
+            // Base circle radius
+            float radius = range * MathF.Tan(light.OuterCone);
+
+            var nx = dir.X;
+            var ny = dir.Y;
+            var nz = dir.Z;
+
+            // Extents of circle
+            Vector3 extent = new Vector3(
+                radius * MathF.Sqrt(1 - nx * nx),
+                radius * MathF.Sqrt(1 - ny * ny),
+                radius * MathF.Sqrt(1 - nz * nz)
+            );
+
+            Vector3 minC = C - extent;
+            Vector3 maxC = C + extent;
+
+            // AABB of cone is Union(Tip, BaseCircle)
+            Vector3 min = Vector3.Min(pos, minC);
+            Vector3 max = Vector3.Max(pos, maxC);
+
+            return (min, max);
+        }
+
+
+        // Directional light (Type 1) is infinite, use huge bounds
+        return (new Vector3(-100000), new Vector3(100000));
+    }
+
+    public void DrawDebug(ImmediateRenderer renderer, bool showBVH, bool showDynamicBVH, bool showSelection) {
+        if (showBVH) {
             _staticBvh.DrawDebug(renderer, RgbaFloat.White);
         }
-        
-        if (showDynamicBVH)
-        {
+
+
+        if (showDynamicBVH) {
             _dynamicBvh.DrawDebug(renderer, RgbaFloat.Green);
         }
 
-        if (showSelection && _selectedNode != null)
-        {
-            if (_nodeToInstance.TryGetValue(_selectedNode, out int index))
-            {
+
+        if (showSelection && _selectedNode != null) {
+            if (_nodeToInstance.TryGetValue(_selectedNode, out int index)) {
                 var inst = _meshInstances[index];
-                if (_nodeWorldTransforms.TryGetValue(_selectedNode, out var world))
-                {
+
+                if (_nodeWorldTransforms.TryGetValue(_selectedNode, out var world)) {
                     var (min, max) = GetWorldAABB(inst.Mesh, world);
                     renderer.DrawAABB(min, max, RgbaFloat.Yellow);
                 }
             }
-            else if (_selectedNode.Light != null && _nodeWorldTransforms.TryGetValue(_selectedNode, out var world))
-            {
-                var pos = world.Translation;
-                renderer.DrawAABB(pos - new Vector3(0.5f), pos + new Vector3(0.5f), RgbaFloat.Yellow);
+            else if (_selectedNode.Light != null && _nodeWorldTransforms.TryGetValue(_selectedNode, out var world)) {
+                // Draw light AABB
+                var (min, max) = GetLightAABB(_selectedNode, world);
+                renderer.DrawAABB(min, max, RgbaFloat.Yellow);
             }
         }
 
-        foreach (var node in _lightNodes)
-        {
-            if (_nodeWorldTransforms.TryGetValue(node, out var world))
-            {
+
+        foreach (var node in _visibleLights) {
+            if (_nodeWorldTransforms.TryGetValue(node, out var world)) {
                 var pos = world.Translation;
                 var color = new RgbaFloat(node.Light!.Color.X, node.Light.Color.Y, node.Light.Color.Z, 1.0f);
-                
+
                 float s = 0.2f;
-                renderer.DrawLine(pos + new Vector3(s,0,0), pos - new Vector3(s,0,0), color);
-                renderer.DrawLine(pos + new Vector3(0,s,0), pos - new Vector3(0,s,0), color);
-                renderer.DrawLine(pos + new Vector3(0,0,s), pos - new Vector3(0,0,s), color);
-                
-                if (node.Light.Type != 0) 
-                {
-                    var dir = Vector3.TransformNormal(new Vector3(0,0,-1), world);
+                renderer.DrawLine(pos + new Vector3(s, 0, 0), pos - new Vector3(s, 0, 0), color);
+                renderer.DrawLine(pos + new Vector3(0, s, 0), pos - new Vector3(0, s, 0), color);
+                renderer.DrawLine(pos + new Vector3(0, 0, s), pos - new Vector3(0, 0, s), color);
+
+                if (node.Light.Type != 0) {
+                    var dir = Vector3.TransformNormal(new Vector3(0, 0, -1), world);
                     renderer.DrawLine(pos, pos + dir * 2.0f, color);
                 }
             }
         }
     }
 
-    private (Vector3 Min, Vector3 Max) GetWorldAABB(MeshGpu mesh, Matrix4x4 world)
-    {
+    private (Vector3 Min, Vector3 Max) GetWorldAABB(MeshGpu mesh, Matrix4x4 world) {
         var center = (mesh.AABBMin + mesh.AABBMax) * 0.5f;
         var extents = (mesh.AABBMax - mesh.AABBMin) * 0.5f;
-        
+
         var worldCenter = Vector3.Transform(center, world);
-        
-        var absM11 = Math.Abs(world.M11); var absM12 = Math.Abs(world.M12); var absM13 = Math.Abs(world.M13);
-        var absM21 = Math.Abs(world.M21); var absM22 = Math.Abs(world.M22); var absM23 = Math.Abs(world.M23);
-        var absM31 = Math.Abs(world.M31); var absM32 = Math.Abs(world.M32); var absM33 = Math.Abs(world.M33);
-        
+
+        var absM11 = Math.Abs(world.M11);
+        var absM12 = Math.Abs(world.M12);
+        var absM13 = Math.Abs(world.M13);
+        var absM21 = Math.Abs(world.M21);
+        var absM22 = Math.Abs(world.M22);
+        var absM23 = Math.Abs(world.M23);
+        var absM31 = Math.Abs(world.M31);
+        var absM32 = Math.Abs(world.M32);
+        var absM33 = Math.Abs(world.M33);
+
         float newEx = absM11 * extents.X + absM21 * extents.Y + absM31 * extents.Z;
         float newEy = absM12 * extents.X + absM22 * extents.Y + absM32 * extents.Z;
         float newEz = absM13 * extents.X + absM23 * extents.Y + absM33 * extents.Z;
-        
+
         var worldMin = new Vector3(worldCenter.X - newEx, worldCenter.Y - newEy, worldCenter.Z - newEz);
         var worldMax = new Vector3(worldCenter.X + newEx, worldCenter.Y + newEy, worldCenter.Z + newEz);
-        
+
         return (worldMin, worldMax);
     }
 
-    public void AddCustomMesh(string name, MeshData data)
-    {
+    public void AddCustomMesh(string name, MeshData data) {
         Console.WriteLine($"[GltfPass] Adding custom mesh '{name}' with {data.Vertices.Length} floats and {data.Indices.Length} indices.");
-        if (_customMeshCache.ContainsKey(name))
-        {
+
+        if (_customMeshCache.ContainsKey(name)) {
             _customMeshCache[name].Dispose();
         }
+
+
         _customMeshCache[name] = new MeshGpu(_geometryBuffer, data);
     }
 
-    public void LoadScene(SceneAsset scene, bool additive = false)
-    {
-        Console.WriteLine($"[GltfPass] LoadScene called (Additive: {additive}). Roots: {scene.RootNodes.Count}");
-        
+    public void LoadScene(SceneAsset scene, bool additive = false) {
         _gd.WaitForIdle();
 
-        if (!additive)
-        {
+        if (!additive) {
             ClearResources();
         }
+
 
         int[] materialMap = LoadMaterials(scene);
 
@@ -281,8 +457,12 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 transform = Matrix4x4.Identity;
                 _nodeWorldTransforms[node] = transform;
             }
+
+
             return true;
         }
+
+
         return false;
     }
 
@@ -291,6 +471,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             return false;
         }
 
+
         Matrix4x4 parentWorld = Matrix4x4.Identity;
 
         if (_nodeParents.TryGetValue(node, out var parent) && parent != null &&
@@ -298,9 +479,11 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             parentWorld = cachedParentWorld;
         }
 
+
         if (!Matrix4x4.Invert(parentWorld, out var parentInverse)) {
             parentInverse = Matrix4x4.Identity;
         }
+
 
         node.LocalTransform = worldTransform * parentInverse;
 
@@ -308,29 +491,88 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             node.LocalTransform = Matrix4x4.Identity;
         }
 
+
         UpdateWorldRecursive(node, parentWorld);
 
         return true;
     }
 
-    public (List<int> Results, SceneBVH.BVHStats Stats) Query(Frustum frustum)
-    {
+    public (List<int> Results, SceneBVH.BVHStats Stats) Query(Frustum frustum) {
         var (staticIndices, staticStats) = _staticBvh.Query(frustum);
         var (dynamicIndices, dynamicStats) = _dynamicBvh.Query(frustum);
-        
+
         var results = new List<int>(staticIndices.Count + dynamicIndices.Count);
         results.AddRange(staticIndices);
         results.AddRange(dynamicIndices);
-        
+
         var stats = staticStats;
         stats.NodesVisited += dynamicStats.NodesVisited;
         stats.NodesCulled += dynamicStats.NodesCulled;
         stats.LeafsTested += dynamicStats.LeafsTested;
-        
+
         return (results, stats);
     }
 
-    public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null) {
+    private List<int> _cachedVisibleIndices = new();
+
+    public void Update(Camera camera) {
+        // Rebuild dynamic BVH every frame
+        RebuildDynamicBVH();
+
+        _cachedVisibleIndices.Clear();
+        _visibleTransforms.Clear();
+        _visibleLights.Clear();
+
+        var viewProj = camera.ViewMatrix * camera.ProjectionMatrix;
+        var frustum = new Frustum(viewProj);
+
+        // Query both BVHs
+        var (visibleIndices, stats) = Query(frustum);
+        CullingStats = stats;
+
+        // Force include selected node and its subtree (bypass culling)
+        if (_selectedNode != null && IsGizmoActive) {
+            ForceVisibleRecursive(_selectedNode, visibleIndices);
+        }
+
+
+        visibleIndices.Sort();
+        _cachedVisibleIndices = visibleIndices;
+
+        // Separate Meshes and Lights
+        // Also populate _visibleTransforms for meshes
+        foreach (var idx in visibleIndices) {
+            if (idx < _meshInstances.Count) {
+                // Is Mesh
+                // Note: We don't populate _visibleTransforms here because we need batching logic from Render
+                // But we can identify it's a mesh
+            }
+            else {
+                // Is Light
+                int lightIndex = idx - _meshInstances.Count;
+
+                if (lightIndex >= 0 && lightIndex < _lightNodes.Count) {
+                    _visibleLights.Add(_lightNodes[lightIndex]);
+                }
+            }
+        }
+    }
+
+    public void PrepareRender(GraphicsDevice gd, CommandList cl, Camera? camera, Vector2 screenSize, int debugMode)
+    {
+        if (camera == null) return;
+
+        ResizeLightCullingResources((uint)screenSize.X, (uint)screenSize.Y);
+        
+        _cameraBuffer.Update(gd, camera, screenSize, debugMode);
+        
+        CollectLights();
+        _lightBuffer.UpdateGPU();
+        
+        CullLights(cl);
+    }
+
+    public void Render(GraphicsDevice gd, CommandList cl, Camera? camera, Vector2 screenSize, int debugMode) {
         if (camera == null)
             return;
 
@@ -340,81 +582,73 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         RenderedTriangles = 0;
         RenderedVertices = 0;
 
-        _cameraBuffer.Update(gd, camera);
-        
-        CollectLights();
-        _lightBuffer.UpdateGPU();
-        
-        // Rebuild dynamic BVH every frame
-        RebuildDynamicBVH();
-
         if (_meshInstances.Count == 0)
             return;
 
-        // 1. Culling Pass
-        _visibleTransforms.Clear();
-        var viewProj = camera.ViewMatrix * camera.ProjectionMatrix;
-        var frustum = new Frustum(viewProj);
-
-        // Query both BVHs
-        var (visibleIndices, stats) = Query(frustum);
-        CullingStats = stats;
-        
-        // Force include selected node and its subtree (bypass culling)
-        if (_selectedNode != null && IsGizmoActive) {
-            ForceVisibleRecursive(_selectedNode, visibleIndices);
-        }
-        
-        visibleIndices.Sort(); 
+        // Use cached visible indices from Update()
+        var visibleIndices = _cachedVisibleIndices;
 
         var drawRanges = new List<(MeshGpu Mesh, int MaterialIndex, int InstanceCount, int StartIndex)>();
 
-        if (visibleIndices.Count > 0)
-        {
+        if (visibleIndices.Count > 0) {
             int listIndex = 0;
             int currentVisibleStart = 0;
 
-            while (listIndex < visibleIndices.Count)
-            {
+            while (listIndex < visibleIndices.Count) {
                 int instanceIdx = visibleIndices[listIndex];
+
+                // Skip lights in mesh processing
+                if (instanceIdx >= _meshInstances.Count) {
+                    listIndex++;
+
+                    continue;
+                }
+
+
                 var batchStartInstance = _meshInstances[instanceIdx];
                 var batchMesh = batchStartInstance.Mesh;
                 int batchMaterialIndex = batchStartInstance.MaterialIndex;
                 int batchVisibleCount = 0;
 
-                while (listIndex < visibleIndices.Count)
-                {
+                while (listIndex < visibleIndices.Count) {
                     int nextIdx = visibleIndices[listIndex];
-                    
-                    if (nextIdx == instanceIdx && listIndex > 0 && visibleIndices[listIndex-1] == instanceIdx)
-                    {
+
+                    if (nextIdx == instanceIdx && listIndex > 0 && visibleIndices[listIndex - 1] == instanceIdx) {
                         listIndex++;
+
                         continue;
                     }
+
+
                     instanceIdx = nextIdx;
-                    
+
+                    // Stop if we hit a light
+                    if (nextIdx >= _meshInstances.Count)
+                        break;
+
                     var next = _meshInstances[nextIdx];
-                    
+
                     if (next.Mesh != batchMesh || next.MaterialIndex != batchMaterialIndex)
                         break;
 
-                    if (_nodeWorldTransforms.TryGetValue(next.Node, out var world))
-                    {
+                    if (_nodeWorldTransforms.TryGetValue(next.Node, out var world)) {
                         _visibleTransforms.Add(new ModelUniform(world));
                         batchVisibleCount++;
                     }
-                    
+
+
                     listIndex++;
                 }
 
-                if (batchVisibleCount > 0)
-                {
+
+                if (batchVisibleCount > 0) {
                     drawRanges.Add((batchMesh, batchMaterialIndex, batchVisibleCount, currentVisibleStart));
                     currentVisibleStart += batchVisibleCount;
                 }
             }
         }
-        
+
+
         // 2. Upload Buffer
         _modelBuffer.UpdateAll(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_visibleTransforms));
 
@@ -425,21 +659,25 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         cl.SetGraphicsResourceSet(4, _lightBuffer.ResourceSet);
         cl.SetGraphicsResourceSet(5, _lightBuffer.ParamResourceSet);
         cl.SetGraphicsResourceSet(6, _shadowDataBuffer.ResourceSet);
+
         if (ShadowAtlas != null) {
             cl.SetGraphicsResourceSet(7, ShadowAtlas.ResourceSet);
         }
 
+        cl.SetGraphicsResourceSet(8, _lightCullReadResourceSet);
+
         cl.SetVertexBuffer(0, _geometryBuffer.VertexBuffer);
         cl.SetIndexBuffer(_geometryBuffer.IndexBuffer, IndexFormat.UInt32);
 
-        foreach (var batch in drawRanges)
-        {
+        foreach (var batch in drawRanges) {
             // Bind Material
             var material = ResolveMaterial(batch.MaterialIndex);
+
             if (material != null) {
                 if (material.ResourceSet != null) cl.SetGraphicsResourceSet(2, material.ResourceSet);
                 if (material.ParamsResourceSet != null) cl.SetGraphicsResourceSet(3, material.ParamsResourceSet);
             }
+
 
             cl.DrawIndexed(
                 batch.Mesh.Range.IndexCount,
@@ -460,18 +698,28 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         if (_nodeToInstance.TryGetValue(node, out int idx)) {
             visibleIndices.Add(idx);
         }
+        // Force visible lights too?
+        // Lights are not in _nodeToInstance map which maps to MeshInstances only.
+        // We need to map light node to light index.
+        // But since we sort everything, we can just find it.
+        // Optimization: Create _nodeToLightIndex map?
+
+
         foreach (var child in node.Children) {
             ForceVisibleRecursive(child, visibleIndices);
         }
     }
 
     private void SortAndUploadInstances() {
-        if (_meshInstances.Count == 0) return;
+        if (_meshInstances.Count == 0 && _lightNodes.Count == 0) return;
 
+        // Sort meshes
         _meshInstances.Sort((a, b) =>
         {
             int cmpMat = a.MaterialIndex.CompareTo(b.MaterialIndex);
+
             if (cmpMat != 0) return cmpMat;
+
             return a.Mesh.GetHashCode().CompareTo(b.Mesh.GetHashCode());
         });
 
@@ -482,12 +730,16 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _staticIndices.Clear();
         _dynamicIndices.Clear();
 
+        // Meshes
         for (int i = 0; i < _meshInstances.Count; i++) {
             var inst = _meshInstances[i];
-            
-            if (inst.Node.IsStatic) _staticIndices.Add(i);
-            else _dynamicIndices.Add(i);
-            
+
+            if (inst.Node.IsVisible) {
+                if (inst.Node.IsStatic) _staticIndices.Add(i);
+                else _dynamicIndices.Add(i);
+            }
+
+
             TotalSceneTriangles += inst.Mesh.IndexCount / 3;
 
             if (!_nodeWorldTransforms.TryGetValue(inst.Node, out var world))
@@ -499,8 +751,24 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             _nodeToInstance[inst.Node] = i;
         }
 
+
+        // Lights
+        int meshCount = _meshInstances.Count;
+
+        for (int i = 0; i < _lightNodes.Count; i++) {
+            var node = _lightNodes[i];
+
+            if (!node.IsVisible) continue;
+
+            int globalIndex = meshCount + i;
+
+            if (node.IsStatic) _staticIndices.Add(globalIndex);
+            else _dynamicIndices.Add(globalIndex);
+        }
+
+
         BuildBVH(_staticBvh, _staticIndices);
-        
+
         _modelBuffer.EnsureCapacity(_meshInstances.Count);
         _modelBuffer.UpdateAll(uniforms);
     }
@@ -514,8 +782,10 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
             if (_materialCache.TryGetValue(hash, out int globalIndex)) {
                 map[i] = globalIndex;
+
                 continue;
             }
+
 
             globalIndex = _materials.Count;
             map[i] = globalIndex;
@@ -538,6 +808,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 material.EmissiveFactor = Vector3.One;
             }
 
+
             var rmaPath = ResolveCachedTexture(src.RMAHash);
 
             if (material.UsePackedRMA && rmaPath != null) {
@@ -546,9 +817,12 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 material.OcclusionPath = rmaPath;
             }
 
+
             MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, material);
             _materials.Add(material);
         }
+
+
         return map;
     }
 
@@ -573,11 +847,13 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             _lightNodes.Add(node);
         }
 
+
         if (node.Mesh != null) {
             var meshRef = node.Mesh;
+
             if (TryLoadMesh(meshRef, materialMap, out MeshGpu? meshGpu, out int globalMaterialIndex)) {
                 var mesh = meshGpu!;
-                
+
                 int transformIndex = _modelBuffer.Allocate(worldTransform);
                 int instanceIndex = _meshInstances.Count;
                 _meshInstances.Add(new MeshInstance(mesh, globalMaterialIndex, transformIndex, node));
@@ -590,6 +866,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             }
         }
 
+
         foreach (var child in node.Children) {
             LoadMeshRecursive(child, worldTransform, node, materialMap);
         }
@@ -601,41 +878,54 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
         if (_customMeshCache.TryGetValue(meshRef.MeshHash, out meshGpu)) {
             Console.WriteLine($"[GltfPass] Found custom mesh '{meshRef.MeshHash}'");
-             if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
+
+            if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
                 globalMaterialIndex = materialMap[meshRef.MaterialIndex];
             }
+
+
             return true;
-        } else {
-             // Console.WriteLine($"[GltfPass] Custom mesh '{meshRef.MeshHash}' NOT found in cache.");
         }
+        else {
+            // Console.WriteLine($"[GltfPass] Custom mesh '{meshRef.MeshHash}' NOT found in cache.");
+        }
+
 
         if (_meshCache.TryGetValue(meshRef.MeshHash, out meshGpu)) {
             if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
                 globalMaterialIndex = materialMap[meshRef.MaterialIndex];
             }
+
+
             return true;
         }
 
+
         if (!AssetCache.HasMesh(meshRef.MeshHash, out var meshPath)) {
             Console.WriteLine($"[ScenePass] Missing cached mesh for hash {meshRef.MeshHash}");
+
             return false;
         }
+
 
         try {
             var meshData = WlMeshFormat.Read(meshPath, out _);
             meshGpu = new MeshGpu(_geometryBuffer, meshData);
             _meshCache[meshRef.MeshHash] = meshGpu;
-            
+
             SourceVertices += meshData.Vertices.Length / 12;
             SourceIndices += meshData.Indices.Length;
 
             if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
                 globalMaterialIndex = materialMap[meshRef.MaterialIndex];
             }
+
+
             return true;
         }
         catch (Exception ex) {
             Console.WriteLine($"[ScenePass] Failed to load mesh '{meshRef.MeshHash}': {ex.Message}");
+
             return false;
         }
     }
@@ -644,6 +934,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         if (index >= 0 && index < _materials.Count) {
             return _materials[index];
         }
+
+
         return null;
     }
 
@@ -654,24 +946,28 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private static string? ResolveCachedTexture(string? hash) {
         if (string.IsNullOrEmpty(hash))
             return null;
+
         return AssetCache.HasTexture(hash, out var path) ? path : null;
     }
 
     private void ClearResources() {
         Console.WriteLine("[GltfPass] ClearResources called");
+
         foreach (var mesh in _meshCache.Values) {
             mesh.Dispose();
         }
 
+
         _meshCache.Clear();
         // Do NOT clear custom mesh cache
-        
+
         SourceVertices = 0;
         SourceIndices = 0;
 
         foreach (var mat in _materials) {
             mat.Dispose();
         }
+
 
         _materials.Clear();
         _materialCache.Clear();
@@ -682,17 +978,20 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _nodeParents.Clear();
         _nodeWorldTransforms.Clear();
         _loggedFirstInstance = false;
-        
+
+        _lightNodes.Clear();
+
         _staticIndices.Clear();
         _dynamicIndices.Clear();
     }
-    
+
     private void UpdateWorldRecursive(SceneNode node, Matrix4x4 parentWorld) {
         var worldTransform = node.LocalTransform * parentWorld;
 
         if (IsDegenerateMatrix(worldTransform)) {
             worldTransform = Matrix4x4.Identity;
         }
+
 
         _nodeWorldTransforms[node] = worldTransform;
 
@@ -712,6 +1011,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         if (allZero) return true;
         if (!Matrix4x4.Decompose(matrix, out var scale, out _, out _)) return true;
         if (Math.Abs(scale.X) < epsilon || Math.Abs(scale.Y) < epsilon || Math.Abs(scale.Z) < epsilon) return true;
+
         return false;
     }
 
@@ -727,8 +1027,9 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             _lightBuffer.AddLight(l);
         }
 
-        // 2. Scene lights
-        foreach (var node in _lightNodes) {
+
+        // 2. Scene lights (use _visibleLights populated by Update)
+        foreach (var node in _visibleLights) {
             if (node.Light == null) continue;
 
             if (_nodeWorldTransforms.TryGetValue(node, out var world)) {
@@ -739,22 +1040,26 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 float outerDeg = (float)(node.Light.OuterCone * 180.0 / Math.PI);
 
                 int shadowIndex = -1;
+
                 if (ShadowAtlas != null) {
                     var allocs = ShadowAtlas.GetAllocations(node);
+
                     if (allocs != null && allocs.Length > 0) {
                         shadowIndex = shadowData.Count;
+
                         foreach (var alloc in allocs) {
                             float scale = (float)alloc.TileSize / 2048.0f;
                             float x = (float)alloc.AtlasX * alloc.TileSize / 2048.0f;
                             float y = (float)alloc.AtlasY * alloc.TileSize / 2048.0f;
-                            
+
                             shadowData.Add(new ShadowData(
-                                alloc.ViewProj, 
+                                alloc.ViewProj,
                                 new Vector4(x, y, scale, (float)alloc.PageIndex)
                             ));
                         }
                     }
                 }
+
 
                 var light = new LightUniform(
                     pos,
@@ -771,7 +1076,6 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 _lightBuffer.AddLight(light);
             }
         }
-        
         _shadowDataBuffer.Update(shadowData.ToArray());
     }
 

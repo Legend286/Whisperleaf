@@ -40,11 +40,19 @@ public class PhysicsTestScene
     {
          foreach (var (body, node) in _bindings)
         {
+            // Sync Static State -> Kinematic/Dynamic
+            var desiredType = node.IsStatic ? MotionType.Kinematic : MotionType.Dynamic;
+            if (body.MotionType != desiredType)
+            {
+                body.MotionType = desiredType;
+                if (desiredType == MotionType.Dynamic) body.SetActivationState(true);
+            }
+
             bool isManipulating = renderer.IsManipulating && renderer.SelectedNode == node;
 
             if (isManipulating)
             {
-                if (!node.IsStatic)
+                if (!body.IsStatic)
                 {
                     if (body.AffectedByGravity) body.AffectedByGravity = false;
                     body.Velocity = JVector.Zero;
@@ -61,7 +69,7 @@ public class PhysicsTestScene
             }
             else
             {
-                if (!node.IsStatic)
+                if (!body.IsStatic)
                 {
                     if (!body.AffectedByGravity)
                     {
@@ -69,16 +77,16 @@ public class PhysicsTestScene
                         body.Velocity = JVector.Zero;
                         body.AngularVelocity = JVector.Zero;
                     }
+                    
+                    var pos = body.Position;
+                    var jQuat = body.Orientation; 
+                    var numQuat = new System.Numerics.Quaternion(jQuat.X, jQuat.Y, jQuat.Z, jQuat.W);
+                    
+                    var mat = Matrix4x4.CreateFromQuaternion(numQuat);
+                    mat.Translation = new Vector3(pos.X, pos.Y, pos.Z);
+                    
+                    renderer.UpdateNodeTransform(node, mat);
                 }
-                
-                var pos = body.Position;
-                var jQuat = body.Orientation; 
-                var numQuat = new System.Numerics.Quaternion(jQuat.X, jQuat.Y, jQuat.Z, jQuat.W);
-                
-                var mat = Matrix4x4.CreateFromQuaternion(numQuat);
-                mat.Translation = new Vector3(pos.X, pos.Y, pos.Z);
-                
-                renderer.UpdateNodeTransform(node, mat);
             }
         }
     }

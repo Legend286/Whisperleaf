@@ -117,6 +117,7 @@ public class SceneNode
     public MeshReference? Mesh { get; set; }
     public SceneLight? Light { get; set; }
     public bool IsStatic { get; set; } = true;
+    public bool IsVisible { get; set; } = true;
     public List<SceneNode> Children { get; set; } = new();
 
     /// <summary>

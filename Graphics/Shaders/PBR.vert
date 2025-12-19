@@ -13,6 +13,10 @@ layout(set = 0, binding = 0) uniform CameraBuffer {
     mat4 u_Proj;
     mat4 u_ViewProj;
     vec3 u_CameraPos;
+    float u_Padding0;
+    vec2 u_ScreenSize;
+    int u_DebugMode;
+    int u_Padding1;
 };
 
 layout(std140, set = 1, binding = 0) buffer ModelTransforms {

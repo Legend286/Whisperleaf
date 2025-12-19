@@ -74,12 +74,12 @@ public class MeshPass : IRenderPass
         );
     }
 
-    public void Render(GraphicsDevice gd, CommandList cl, Camera? camera = null)
+    public void Render(GraphicsDevice gd, CommandList cl, Camera? camera, Vector2 screenSize, int debugMode)
     {
         if (camera == null)
             return;
         
-        _cameraBuffer.Update(gd, camera!);
+        _cameraBuffer.Update(gd, camera!, screenSize, debugMode);
         cl.Begin();
         cl.SetFramebuffer(gd.MainSwapchain.Framebuffer);
         cl.ClearColorTarget(0, RgbaFloat.CornflowerBlue);

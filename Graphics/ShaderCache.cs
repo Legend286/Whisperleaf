@@ -6,6 +6,7 @@ namespace Whisperleaf.Graphics
     public static class ShaderCache
     {
         private static readonly Dictionary<(string, string), Shader[]> _shaderPairs = new();
+        private static readonly Dictionary<string, Shader> _shaders = new();
 
         public static Shader[] GetShaderPair(GraphicsDevice gd, string vertexPath, string fragmentPath)
         {
@@ -25,6 +26,20 @@ namespace Whisperleaf.Graphics
             return shaders;
         }
 
+        public static Shader GetShader(GraphicsDevice gd, ShaderStages stage, string path)
+        {
+            if (_shaders.TryGetValue(path, out var shader))
+                return shader;
+
+            string code = File.ReadAllText(path);
+            shader = gd.ResourceFactory.CreateFromSpirv(
+                new ShaderDescription(stage, System.Text.Encoding.UTF8.GetBytes(code), "main")
+            );
+
+            _shaders[path] = shader;
+            return shader;
+        }
+
         public static void DisposeAll()
         {
             foreach (var pair in _shaderPairs.Values)
@@ -35,6 +50,12 @@ namespace Whisperleaf.Graphics
                 }
             }
             _shaderPairs.Clear();
+            
+            foreach (var shader in _shaders.Values)
+            {
+                shader.Dispose();
+            }
+            _shaders.Clear();
         }
     }
 }
