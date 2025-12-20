@@ -278,7 +278,17 @@ public class Renderer
         ImGuizmo.SetOrthographic(false);
         ImGuizmo.SetDrawlist();
         ImGuizmo.SetRect(_viewportWindow.Position.X, _viewportWindow.Position.Y, _viewportWindow.Size.X, _viewportWindow.Size.Y);
-        ImGuizmo.Manipulate(ref view.M11, ref projection.M11, _gizmoOperation, MODE.WORLD, ref gizmoTransform.M11);
+        
+        if (_editorManager.SnapEnabled)
+        {
+            Vector3 snap = new Vector3(_editorManager.SnapValue);
+            Matrix4x4 delta = Matrix4x4.Identity;
+            ImGuizmo.Manipulate(ref view.M11, ref projection.M11, _gizmoOperation, MODE.WORLD, ref gizmoTransform.M11, ref delta.M11, ref snap.X);
+        }
+        else
+        {
+            ImGuizmo.Manipulate(ref view.M11, ref projection.M11, _gizmoOperation, MODE.WORLD, ref gizmoTransform.M11);
+        }
 
         bool isUsing = ImGuizmo.IsUsing();
         _scenePass.IsGizmoActive = isUsing; // Update GltfPass with gizmo state
@@ -306,6 +316,8 @@ public class Renderer
         }
     }
     
+    public void InstantiateAsset(string path) => _editorManager.InstantiateAsset(path);
+
     public void Dispose()
     {
         _scenePass.Dispose();

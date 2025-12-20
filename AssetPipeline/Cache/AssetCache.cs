@@ -11,7 +11,7 @@ namespace Whisperleaf.AssetPipeline.Cache;
 /// </summary>
 public static class AssetCache
 {
-    private static readonly string CacheRoot = Path.Combine(
+    public static readonly string CacheRoot = Path.Combine(
         ".cache", "whisperleaf"
     );
 
@@ -149,6 +149,97 @@ public static class AssetCache
 
         path = string.Empty;
         return false;
+    }
+
+    /// <summary>
+    /// Scans the cache directory and registers all found assets
+    /// </summary>
+    public static void RebuildRegistry()
+    {
+        var registry = LoadRegistry();
+        lock (_lock)
+        {
+            if (!Directory.Exists(CacheRoot)) return;
+            
+            var files = Directory.GetFiles(CacheRoot, "*.*", SearchOption.AllDirectories);
+            bool changed = false;
+
+            foreach (var file in files)
+            {
+                string ext = Path.GetExtension(file).ToLowerInvariant();
+                try 
+                {
+                    if (ext == ".wlmesh")
+                    {
+                        // Use WlMeshFormat to get hash
+                        // WlMeshFormat.Read reads the whole mesh which is slow for scanning.
+                        // We should just peek header.
+                        // Header: Magic(4), Ver(4), VCount(4), ICount(4), Stride(4), MatIdx(4), Min(12), Max(12) = 48 bytes.
+                        // Then Hash(32).
+                        using var fs = File.OpenRead(file);
+                        using var br = new BinaryReader(fs);
+                        if (fs.Length > 80) // Min size
+                        {
+                            br.BaseStream.Seek(48, SeekOrigin.Begin);
+                            byte[] hashBytes = br.ReadBytes(32);
+                            string hash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+                            
+                            if (!registry.ContainsKey(hash))
+                            {
+                                registry[hash] = new CacheEntry { Type = AssetType.Mesh, Path = file };
+                                changed = true;
+                            }
+                        }
+                    }
+                    else if (ext == ".wltex")
+                    {
+                        using var fs = File.OpenRead(file);
+                        using var br = new BinaryReader(fs);
+                        if (fs.Length > 64)
+                        {
+                            // Skip 32 bytes header
+                            br.BaseStream.Seek(32, SeekOrigin.Begin);
+                            byte[] hashBytes = br.ReadBytes(32);
+                            string hash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+                            
+                            if (!registry.ContainsKey(hash))
+                            {
+                                registry[hash] = new CacheEntry { Type = AssetType.Texture, Path = file };
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                catch { /* Skip invalid files */ }
+            }
+            
+            if (changed) SaveRegistry();
+        }
+    }
+
+    /// <summary>
+    /// Register an existing file in the cache (e.g. found during scan)
+    /// </summary>
+    public static void RegisterExisting(string hash, string path, AssetType type)
+    {
+        if (string.IsNullOrEmpty(hash) || string.IsNullOrEmpty(path) || !File.Exists(path))
+            return;
+
+        var registry = LoadRegistry();
+        lock (_lock)
+        {
+            // If missing OR stale (file at registered path doesn't exist), update it
+            if (!registry.TryGetValue(hash, out var entry) || !File.Exists(entry.Path))
+            {
+                registry[hash] = new CacheEntry
+                {
+                    Type = type,
+                    Path = path,
+                    Metadata = null
+                };
+                SaveRegistry();
+            }
+        }
     }
 
     /// <summary>

@@ -64,10 +64,10 @@ public class FileDialogWindow : EditorWindow
 
         foreach (var dir in _directories)
         {
-            var label = $"📁 {Path.GetFileName(dir)}";
+            var label = $" {Path.GetFileName(dir)}";
             if (string.IsNullOrEmpty(Path.GetFileName(dir)))
             {
-                label = "📁 ..";
+                label = "..";
             }
 
             if (ImGui.Selectable(label, false, ImGuiSelectableFlags.AllowDoubleClick))

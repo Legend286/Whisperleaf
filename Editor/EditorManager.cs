@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 using ImGuiNET;
@@ -7,11 +9,13 @@ using ImGuizmoNET;
 using ImPlotNET;
 using Veldrid;
 using Veldrid.Sdl2;
+using Whisperleaf.AssetPipeline.Cache;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor.Windows;
 using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Input;
 using Whisperleaf.Platform;
+using TextureType = Whisperleaf.AssetPipeline.Cache.TextureType;
 
 namespace Whisperleaf.Editor;
 
@@ -31,6 +35,8 @@ public class EditorManager : IDisposable {
     private readonly ImportWizardWindow _importWizard;
     private readonly FileDialogWindow _fileDialog;
 
+    private readonly ThumbnailGenerator _thumbnailGenerator;
+
     private SceneAsset? _currentScene;
 
     public event Action<SceneAsset, bool>? SceneRequested;
@@ -49,17 +55,25 @@ public class EditorManager : IDisposable {
     public bool ShowLightHeatmap { get; set; }
     public bool ShowShadows { get; set; } = true;
     
+    public bool SnapEnabled { get; set; }
+    public float SnapValue { get; set; } = 0.5f;
+    
     public EditorManager(GraphicsDevice gd, Sdl2Window window) {
         _gd = gd;
+        
+        // Ensure cache is up to date
+        AssetCache.RebuildRegistry();
 
         _imguiController = new ImGuiController(
             gd,
             gd.MainSwapchain.Framebuffer.OutputDescription,
             window.Width,
             window.Height);
+            
+        _thumbnailGenerator = new ThumbnailGenerator(gd, this);
 
         // Create editor windows
-        _assetBrowser = new AssetBrowserWindow();
+        _assetBrowser = new AssetBrowserWindow(_thumbnailGenerator);
         _sceneOutliner = new SceneOutlinerWindow();
         _inspector = new InspectorWindow();
         _statsWindow = new StatsWindow();
@@ -99,6 +113,7 @@ public class EditorManager : IDisposable {
 
     public void Update(float deltaTime, InputSnapshot snapshot) {
         _imguiController.Update(deltaTime, snapshot);
+        _thumbnailGenerator.Update();
         
         // Shortcuts
         if (InputManager.IsKeyDown(Key.ControlLeft) || InputManager.IsKeyDown(Key.ControlRight))
@@ -119,9 +134,22 @@ public class EditorManager : IDisposable {
                 }
             }
         }
+        else
+        {
+            // Transform Shortcuts (W/E/R)
+            if (!ImGui.GetIO().WantTextInput)
+            {
+                if (InputManager.WasKeyPressed(Key.W)) SetGizmoOperation(OPERATION.TRANSLATE);
+                if (InputManager.WasKeyPressed(Key.E)) SetGizmoOperation(OPERATION.ROTATE);
+                if (InputManager.WasKeyPressed(Key.R)) SetGizmoOperation(OPERATION.SCALE);
+            }
+        }
 
         // Main menu bar
         DrawMenuBar();
+        
+        // Toolbar
+        DrawToolbar();
 
         // Dockspace
         SetupDockspace();
@@ -131,6 +159,205 @@ public class EditorManager : IDisposable {
             window.Draw();
         }
         DrawSaveSceneWindow();
+    }
+    
+    private void DrawToolbar()
+    {
+        var viewport = ImGui.GetMainViewport();
+        
+        ImGui.SetNextWindowPos(new Vector2(viewport.WorkPos.X, viewport.WorkPos.Y));
+        ImGui.SetNextWindowSize(new Vector2(viewport.WorkSize.X, 36));
+        
+        ImGuiWindowFlags flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoDocking;
+        
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0.0f);
+        ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.1f, 0.1f, 0.1f, 1.0f));
+        
+        if (ImGui.Begin("Toolbar", flags))
+        {
+            if (ImGui.Button("T (W)", new Vector2(40, 0))) SetGizmoOperation(OPERATION.TRANSLATE);
+            ImGui.SameLine();
+            if (ImGui.Button("R (E)", new Vector2(40, 0))) SetGizmoOperation(OPERATION.ROTATE);
+            ImGui.SameLine();
+            if (ImGui.Button("S (R)", new Vector2(40, 0))) SetGizmoOperation(OPERATION.SCALE);
+            
+            ImGui.SameLine();
+            ImGui.Separator();
+            ImGui.SameLine();
+            
+            bool snap = SnapEnabled;
+            if (ImGui.Checkbox("Snap", ref snap)) SnapEnabled = snap;
+            
+            if (SnapEnabled)
+            {
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(60);
+                float val = SnapValue;
+                if (ImGui.DragFloat("##snapval", ref val, 0.1f, 0.1f, 100.0f)) SnapValue = val;
+            }
+            
+            ImGui.End();
+        }
+        ImGui.PopStyleColor();
+        ImGui.PopStyleVar();
+    }
+    
+    private void SetGizmoOperation(OPERATION op)
+    {
+        if (GizmoOperation != op)
+        {
+            GizmoOperation = op;
+            GizmoOperationChanged?.Invoke(op);
+        }
+    }
+
+    public void InstantiateAsset(string path)
+    {
+        if (_currentScene == null) 
+        {
+            _currentScene = new SceneAsset { Name = "Untitled" };
+            OnImportComplete(_currentScene);
+        }
+        
+        try 
+        {
+             var meshData = WlMeshFormat.Read(path, out string sourceHash);
+             
+             // Construct texture folder path
+             string dir = Path.GetDirectoryName(path);
+             string meshName = Path.GetFileNameWithoutExtension(path);
+             string texDir = Path.Combine(dir, $"{meshName}_Textures");
+             
+             var matRef = new MaterialReference
+             {
+                 Name = $"{meshName}_Mat",
+                 BaseColorFactor = Vector4.One,
+                 RoughnessFactor = 0.8f,
+                 MetallicFactor = 0.0f
+             };
+             
+             // Attempt to find original material from scene file
+             MaterialReference? originalMat = null;
+             try 
+             {
+                 string cacheRoot = Path.GetFullPath(AssetCache.CacheRoot);
+                 string fullPath = Path.GetFullPath(path);
+                 if (fullPath.StartsWith(cacheRoot))
+                 {
+                     var relative = Path.GetRelativePath(cacheRoot, fullPath);
+                     var parts = relative.Split(Path.DirectorySeparatorChar);
+                     if (parts.Length >= 1)
+                     {
+                         string sceneName = parts[0];
+                         // Search for .wlscene
+                         string[] sceneFiles = Directory.GetFiles("Resources", $"{sceneName}.wlscene", SearchOption.AllDirectories);
+                         if (sceneFiles.Length > 0)
+                         {
+                             var originalScene = SceneAsset.Load(sceneFiles[0]);
+                             if (meshData.MaterialIndex >= 0 && meshData.MaterialIndex < originalScene.Materials.Count)
+                             {
+                                 originalMat = originalScene.Materials[meshData.MaterialIndex];
+                             }
+                         }
+                     }
+                 }
+             }
+             catch (Exception ex) { Console.WriteLine($"[InstantiateAsset] Failed to lookup scene material: {ex.Message}"); }
+
+             if (originalMat != null)
+             {
+                 Console.WriteLine($"[InstantiateAsset] Using original material: {originalMat.Name}");
+                 matRef.BaseColorHash = originalMat.BaseColorHash;
+                 matRef.NormalHash = originalMat.NormalHash;
+                 matRef.RMAHash = originalMat.RMAHash;
+                 matRef.EmissiveHash = originalMat.EmissiveHash;
+                 matRef.BaseColorFactor = originalMat.BaseColorFactor;
+                 matRef.RoughnessFactor = originalMat.RoughnessFactor;
+                 matRef.MetallicFactor = originalMat.MetallicFactor;
+                 matRef.EmissiveFactor = originalMat.EmissiveFactor;
+             }
+             else
+             {
+                 Console.WriteLine($"[InstantiateAsset] Creating new material for {meshName}. Searching for textures in {texDir}");
+                 
+                 if (Directory.Exists(texDir))
+                 {
+                     var texFiles = Directory.GetFiles(texDir, "*.wltex");
+                     Console.WriteLine($"[InstantiateAsset] Found {texFiles.Length} texture files.");
+                     foreach (var texFile in texFiles)
+                     {
+                         try {
+                             using var fs = File.OpenRead(texFile);
+                             using var br = new BinaryReader(fs);
+                             br.ReadUInt32(); // Magic
+                             br.ReadUInt32(); // Version
+                             br.ReadUInt32(); // W
+                             br.ReadUInt32(); // H
+                             var type = (TextureType)br.ReadUInt32();
+                             br.ReadUInt32(); br.ReadUInt32(); br.ReadUInt32();
+                             byte[] hashBytes = br.ReadBytes(32);
+                             string hash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+                             
+                             AssetCache.RegisterExisting(hash, texFile, AssetType.Texture);
+                             Console.WriteLine($"[InstantiateAsset] Registered texture: {Path.GetFileName(texFile)} ({type}) -> {hash}");
+    
+                             switch(type)
+                             {
+                                 case TextureType.BaseColor: matRef.BaseColorHash = hash; break;
+                                 case TextureType.Normal: matRef.NormalHash = hash; break;
+                                 case TextureType.RMA: matRef.RMAHash = hash; break;
+                                 case TextureType.Emissive: matRef.EmissiveHash = hash; break;
+                             }
+                         }
+                         catch (Exception e) { Console.WriteLine($"[InstantiateAsset] Error reading {texFile}: {e.Message}"); }
+                     }
+                 }
+                 else 
+                 {
+                     Console.WriteLine($"[InstantiateAsset] No texture directory found at {texDir}");
+                 }
+             }
+
+             // Add material to current scene
+             int newMatIndex = _currentScene.Materials.Count;
+             _currentScene.Materials.Add(matRef);
+             
+             var node = new SceneNode
+             {
+                 Name = meshName,
+                 Mesh = new MeshReference
+                 {
+                     MeshHash = sourceHash,
+                     MaterialIndex = newMatIndex, // Absolute
+                     AABBMin = meshData.AABBMin,
+                     AABBMax = meshData.AABBMax,
+                     VertexCount = meshData.Vertices.Length / 12,
+                     IndexCount = meshData.Indices.Length
+                 },
+                 LocalTransform = Matrix4x4.CreateTranslation(0, 0, 0),
+                 IsStatic = true
+             };
+             
+             _currentScene.RootNodes.Add(node);
+             
+             // Create delta for renderer
+             var delta = new SceneAsset();
+             delta.RootNodes.Add(node);
+             delta.Materials.Add(matRef);
+             
+             // Temporary hack for additive load: Set MaterialIndex relative to delta (0)
+             // GltfPass reads this during load to map to global index.
+             node.Mesh.MaterialIndex = 0;
+             
+             SceneRequested?.Invoke(delta, true);
+             
+             // Restore absolute index for saving/inspector
+             node.Mesh.MaterialIndex = newMatIndex;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to instantiate asset: {ex.Message}");
+        }
     }
 
     public void AddWindow(EditorWindow window)
@@ -176,6 +403,11 @@ public class EditorManager : IDisposable {
                     OnImportComplete(scene);
                 }
 
+                if (ImGui.MenuItem("Open Scene...")) {
+                    _fileDialog.Open("Open Scene", new[] { ".wlscene" }, "Resources/Scenes", path => {
+                        TryLoadSceneFromPath(path);
+                    });
+                }
 
                 ImGui.Separator();
 
@@ -232,12 +464,6 @@ public class EditorManager : IDisposable {
                 bool inspectorOpen = _inspector.IsOpen;
                 bool statsOpen = _statsWindow.IsOpen;
                 
-                // Assuming ViewportWindow is handled externally or we need to find it?
-                // ViewportWindow is added via AddWindow() in Renderer, but EditorManager stores it in _windows list.
-                // We should probably expose it or iterate windows?
-                // For now, let's just loop through windows to find ViewportWindow or make it a field if we can't.
-                // But AddWindow is generic.
-                
                 if (ImGui.MenuItem("Asset Browser", null, ref assetBrowserOpen))
                     _assetBrowser.IsOpen = assetBrowserOpen;
 
@@ -249,8 +475,7 @@ public class EditorManager : IDisposable {
 
                 if (ImGui.MenuItem("Statistics", null, ref statsOpen))
                     _statsWindow.IsOpen = statsOpen;
-
-                // Find ViewportWindow
+                
                 var viewport = _windows.OfType<ViewportWindow>().FirstOrDefault();
                 if (viewport != null)
                 {
@@ -296,7 +521,6 @@ public class EditorManager : IDisposable {
         if (!_saveSceneWindowOpen)
             return;
 
-        // Optional: first-time size
         ImGui.SetNextWindowSize(new Vector2(420, 0), ImGuiCond.FirstUseEver);
 
         if (!ImGui.Begin("Save Scene", ref _saveSceneWindowOpen, ImGuiWindowFlags.AlwaysAutoResize))
@@ -310,7 +534,6 @@ public class EditorManager : IDisposable {
 
         ImGui.InputText("Scene Name", ref _saveSceneName, 32);
 
-        // sanitize AFTER input, but don't destroy user typing too aggressively
         string sanitized = SanitizeAlphanumeric(_saveSceneName);
         if (sanitized != _saveSceneName)
         {
@@ -334,7 +557,7 @@ public class EditorManager : IDisposable {
 
         if (ImGui.Button("Save") && !blocked)
         {
-            Directory.CreateDirectory("Resources/Scenes"); // ensure folder exists
+            Directory.CreateDirectory("Resources/Scenes");
             _currentScene!.Save(path);
             _saveSceneWindowOpen = false;
         }
@@ -351,11 +574,14 @@ public class EditorManager : IDisposable {
     
     private void SetupDockspace() {
         var viewport = ImGui.GetMainViewport();
-        ImGui.SetNextWindowPos(viewport.WorkPos);
-        ImGui.SetNextWindowSize(viewport.WorkSize);
+        // Adjust for toolbar
+        float toolbarHeight = 36.0f;
+        
+        ImGui.SetNextWindowPos(new Vector2(viewport.WorkPos.X, viewport.WorkPos.Y + toolbarHeight));
+        ImGui.SetNextWindowSize(new Vector2(viewport.WorkSize.X, viewport.WorkSize.Y - toolbarHeight));
         ImGui.SetNextWindowViewport(viewport.ID);
 
-        ImGuiWindowFlags windowFlags = ImGuiWindowFlags.MenuBar | ImGuiWindowFlags.NoDocking;
+        ImGuiWindowFlags windowFlags = ImGuiWindowFlags.NoDocking;
         windowFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
         windowFlags |= ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
         windowFlags |= ImGuiWindowFlags.NoBringToFrontOnFocus | ImGuiWindowFlags.NoNavFocus;
@@ -429,19 +655,15 @@ public class EditorManager : IDisposable {
 
     private void OnSceneLoaded(SceneAsset scene, bool additive) {
         if (additive && _currentScene != null) {
-            // Wrap new scene roots for organizational clarity in Inspector
             var wrapper = new SceneNode { Name = scene.Name };
             wrapper.Children.AddRange(scene.RootNodes);
             scene.RootNodes = new List<SceneNode> { wrapper };
 
-            // Notify Renderer (Passes unmodified indices)
             SceneRequested?.Invoke(scene, true);
 
-            // Update local Inspector state (Merge)
             int matOffset = _currentScene.Materials.Count;
             _currentScene.Materials.AddRange(scene.Materials);
 
-            // Update indices in the NEW scene hierarchy
             foreach (var node in wrapper.GetMeshNodes()) {
                 if (node.Mesh != null) node.Mesh.MaterialIndex += matOffset;
             }
@@ -449,7 +671,6 @@ public class EditorManager : IDisposable {
 
             _currentScene.RootNodes.Add(wrapper);
 
-            // Update Metadata
             _currentScene.Metadata.TotalMeshCount += scene.Metadata.TotalMeshCount;
             _currentScene.Metadata.TotalVertexCount += scene.Metadata.TotalVertexCount;
             _currentScene.Metadata.TotalTriangleCount += scene.Metadata.TotalTriangleCount;
@@ -468,7 +689,7 @@ public class EditorManager : IDisposable {
         _currentScene = scene;
         _sceneOutliner.SetScene(scene);
         _statsWindow.SetScene(scene);
-        _assetBrowser.IsOpen = true; // Refresh browser
+        _assetBrowser.IsOpen = true; 
         SceneRequested?.Invoke(scene, false);
     }
 
@@ -493,19 +714,17 @@ public class EditorManager : IDisposable {
             LocalTransform = Matrix4x4.CreateTranslation(0, 2, 0)
         };
 
-        // Add to persistent scene hierarchy (for Inspector)
         _currentScene.RootNodes.Add(node);
 
-        // Create a temporary scene delta for the renderer (Additive)
         var deltaScene = new SceneAsset();
         deltaScene.RootNodes.Add(node);
 
-        // Refresh renderer with just the new light
         SceneRequested?.Invoke(deltaScene, true);
     }
 
     public void Dispose() {
         _imguiController?.Dispose();
+        _thumbnailGenerator?.Dispose();
     }
 
     static string SanitizeAlphanumeric(string input) {

@@ -68,6 +68,25 @@ public class ViewportWindow : EditorWindow
         if (textureId != IntPtr.Zero)
         {
             ImGui.Image(textureId, size);
+            
+            // Drag Drop Target
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload("ASSET_BROWSER_ITEM");
+                unsafe
+                {
+                    if (payload.NativePtr != null)
+                    {
+                        string path = DragDropPayload.CurrentAssetPath;
+                        if (!string.IsNullOrEmpty(path))
+                        {
+                            _renderer.InstantiateAsset(path);
+                        }
+                    }
+                }
+                ImGui.EndDragDropTarget();
+            }
+
             _renderer.DrawGizmo();
         }
 
