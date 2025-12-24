@@ -31,7 +31,9 @@ layout(set = 3, binding = 0) uniform MaterialParams {
     float u_MetallicFactor;
     float u_RoughnessFactor;
     int   u_UsePackedRMA;
-    int   u_Padding1;
+    float u_AlphaCutoff;
+    int   u_AlphaMode;
+    float _mpad0, _mpad1, _mpad2;
 };
 
 struct Light {
@@ -47,7 +49,7 @@ layout(set = 4, binding = 0) readonly buffer LightData {
 
 layout(set = 5, binding = 0) uniform LightParams {
     uint u_LightCount;
-    vec3 _padding;
+    uint _lpad0, _lpad1, _lpad2;
 };
 
 struct ShadowInfo {
@@ -63,27 +65,68 @@ layout(set = 7, binding = 0) uniform texture2DArray ShadowMap;
 layout(set = 7, binding = 1) uniform sampler ShadowSampler;
 
 // Forward+
-layout(set = 8, binding = 0) uniform usampler2D u_LightGrid; // Texture + Sampler
-// Actually Veldrid separates Texture and Sampler in set 8.
-// Binding 0: LightGrid Texture
-// Binding 1: LightGrid Sampler (Added in GltfPass)
-// Binding 2: LightIndices
-// But usampler2D combines them.
-// Let's explicitly define them if using separate bindings?
-// No, in GLSL `uniform usampler2D` expects a combined image sampler.
-// Veldrid handles `Texture` + `Sampler` bindings mapping to `combined image sampler` if we use `usampler2D`?
-// Or we can use `uniform utexture2D` and `uniform sampler` and `texture(sampler2D(t, s), ...)`?
-// texelFetch works on `usampler2D` too.
-// Let's assume Veldrid Set 8 Binding 0 is Texture, Binding 1 is Sampler.
-// So:
 layout(set = 8, binding = 0) uniform utexture2D u_LightGridTex;
 layout(set = 8, binding = 1) uniform sampler u_LightGridSampler;
-// Combine them for texelFetch? texelFetch takes sampler2D.
-// texelFetch(sampler2D(tex, samp), ...)
 
 layout(set = 8, binding = 2) readonly buffer LightIndexList {
     uint u_LightIndices[];
 };
+
+// Cascaded Shadow Maps
+layout(set = 9, binding = 0) uniform texture2DArray CsmMap;
+layout(set = 9, binding = 1) uniform sampler CsmSampler;
+layout(set = 9, binding = 2) uniform CsmUniform {
+    mat4  u_CascadeViewProj[4];
+    vec4  u_CascadeSplits;
+};
+
+float CalcCsm(vec3 worldPos, vec3 N, vec3 L) {
+    vec4 viewPos = u_View * vec4(worldPos, 1.0);
+    float depth = -viewPos.z;
+    
+    int cascadeIndex = 3;
+    if (depth < u_CascadeSplits.x) cascadeIndex = 0;
+    else if (depth < u_CascadeSplits.y) cascadeIndex = 1;
+    else if (depth < u_CascadeSplits.z) cascadeIndex = 2;
+
+    mat4 viewProj = u_CascadeViewProj[cascadeIndex];
+    
+    float NdotL = max(dot(N, L), 0.0);
+    float bias = 0.005 * (1.0 - NdotL);
+    vec3 biasedWorldPos = worldPos + normalize(N) * bias;
+    
+    vec4 posShadow = viewProj * vec4(biasedWorldPos, 1.0);
+    vec3 projCoords = posShadow.xyz / posShadow.w;
+    
+    if (projCoords.z > 1.0) return 1.0;
+    
+    projCoords.y *= -1;
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    
+    // Receiver plane depth bias using derivatives
+    float dz_du = dFdx(projCoords.z);
+    float dz_dv = dFdy(projCoords.z);
+    float slopeBias = max(abs(dz_du), abs(dz_dv));
+    
+    float visibility = 0.0;
+    float filterScale = 1.0 / (1.0 + float(cascadeIndex));
+    vec2 texelSize = vec2(1.0 / 4096.0) * filterScale;
+    
+    // Combine slope bias with a tiny constant to handle flat surfaces
+    float csmBias = max(0.00002 * (1.0 + float(cascadeIndex)), slopeBias);
+    
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            vec2 offset = vec2(x, y) * texelSize;
+            float shadowTest = texture(
+                sampler2DArrayShadow(CsmMap, CsmSampler),
+                vec4(projCoords.xy + offset, float(cascadeIndex), projCoords.z - csmBias)
+            );
+            visibility += shadowTest;
+        }
+    }
+    return visibility / 9.0;
+}
 
 float CalcShadow(int index, vec3 worldPos, vec3 N, vec3 L, vec3 lightPos, float lightRadius) {
     ShadowInfo info = shadows[index];
@@ -265,7 +308,12 @@ void main()
 
         float shadow = 1.0;
         int shadowIdx = int(light.params.z);
-        if (shadowIdx >= 0) {
+        
+        if (type == 1) // Directional
+        {
+            shadow = CalcCsm(f_WorldPos, f_Normal, L);
+        }
+        else if (shadowIdx >= 0) {
             if (type == 0) { // Point
                  vec3 dir = -L;
                  vec3 absDir = abs(dir);
@@ -287,16 +335,21 @@ void main()
         lighting += contribution * shadow;
     }
 
-    vec3 ambient = baseColor.rgb * ao * 0.03;
+    vec3 ambient = baseColor.rgb * ao * 0.05;
     vec3 finalColor = lighting + ambient + emissive;
 
     if (u_DebugMode == 1) {
-        float t = float(count) / 10.0;
+        float t = float(u_LightCount) / 10.0; // Use u_LightCount for heatmap
         vec3 heatmap = mix(vec3(0, 0, 1), vec3(1, 0, 0), clamp(t, 0.0, 1.0));
         finalColor = mix(finalColor, heatmap, 0.5);
         vec2 grid = fract(gl_FragCoord.xy / 16.0);
         if (grid.x < 0.05 || grid.y < 0.05) finalColor = vec3(1.0);
     }
-        
+
+    float alpha = baseTex.a * u_BaseColorFactor.a;
+    if (u_AlphaMode == 1 && alpha < u_AlphaCutoff) {
+        discard;
+    }
+
     out_Color = vec4(finalColor, 1.0f);
 }

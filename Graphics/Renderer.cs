@@ -28,7 +28,10 @@ public class Renderer
     private readonly ImmediateRenderer _immediateRenderer;
     private readonly ShadowAtlas _shadowAtlas;
     private readonly ShadowPass _shadowPass;
-    
+    private readonly CsmAtlas _csmAtlas;
+    private readonly CsmPass _csmPass;
+    private readonly CsmUniformBuffer _csmUniformBuffer;
+
     // Game View Resources
     private Framebuffer _viewFramebuffer;
     private Texture _viewTexture;
@@ -36,21 +39,22 @@ public class Renderer
     private readonly ViewportWindow _viewportWindow;
     public uint ViewportWidth { get; private set; }
     public uint ViewportHeight { get; private set; }
-    
+
     public bool ShowBVH { get; set; }
     public bool ShowDynamicBVH { get; set; }
     public bool ShowSelectionBounds { get; set; } = true;
     public bool ShowLightHeatmap { get; set; }
     public bool EnableShadows { get; set; } = true;
-    
+
     public SceneNode? SelectedNode => _selectedNode;
     public bool IsManipulating => ImGuizmo.IsUsing();
 
     public Camera MainCamera => _viewportWindow.Camera;
-    
+
     private SceneNode? _selectedNode;
     private OPERATION _gizmoOperation;
     private bool _wasUsingGizmo;
+    private bool _sunActiveThisFrame;
     public Renderer(Window window)
     {
         _window = window;
@@ -64,33 +68,38 @@ public class Renderer
         _gizmoOperation = _editorManager.GizmoOperation;
 
         _shadowAtlas = new ShadowAtlas(_window.graphicsDevice);
-        _scenePass = new GltfPass(_window.graphicsDevice, _shadowAtlas.ResourceLayout);
+        _csmAtlas = new CsmAtlas(_window.graphicsDevice);
+        _csmUniformBuffer = new CsmUniformBuffer(_window.graphicsDevice, _csmAtlas.TextureView, _csmAtlas.ShadowSampler);
+
+        _scenePass = new GltfPass(_window.graphicsDevice, _shadowAtlas.ResourceLayout, _csmUniformBuffer.Layout);
+        _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
         _scenePass.ShadowAtlas = _shadowAtlas;
         _shadowPass = new ShadowPass(_window.graphicsDevice);
-        
+        _csmPass = new CsmPass(_window.graphicsDevice);
+
         _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice);
 
         _passes.Add(_scenePass);
 
         _editorManager.SceneRequested += OnSceneRequested;
         _window.WindowResized += _editorManager.WindowResized;
-        
+
         // Initialize Game View
         ViewportWidth = (uint)_window.Width;
         ViewportHeight = (uint)_window.Height;
         if (ViewportWidth == 0) ViewportWidth = 1280;
         if (ViewportHeight == 0) ViewportHeight = 720;
-        
+
         ResizeViewport(ViewportWidth, ViewportHeight);
-        
+
         _depthPass = new DepthPass(_window.graphicsDevice, _viewFramebuffer, _scenePass.CameraBuffer);
-        
+
         _viewportWindow = new ViewportWindow(this, _window);
         _editorManager.AddWindow(_viewportWindow);
     }
 
     public void AddPass(IRenderPass pass) => _passes.Add(pass);
-    
+
     public void AddLight(LightUniform light) => _scenePass.AddLight(light);
 
     public void AddCustomMesh(string name, MeshData data) => _scenePass.AddCustomMesh(name, data);
@@ -108,27 +117,27 @@ public class Renderer
         _viewFramebuffer?.Dispose();
 
         var factory = _window.graphicsDevice.ResourceFactory;
-        
+
         var swapchainFormat = _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.ColorAttachments[0].Format;
         var depthFormat = _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.DepthAttachment.Value.Format;
-        
+
         _viewTexture = factory.CreateTexture(TextureDescription.Texture2D(
-            width, height, 1, 1, 
-            swapchainFormat, 
+            width, height, 1, 1,
+            swapchainFormat,
             TextureUsage.RenderTarget | TextureUsage.Sampled));
-            
+
         _viewDepthTexture = factory.CreateTexture(TextureDescription.Texture2D(
-            width, height, 1, 1, 
-            depthFormat, 
+            width, height, 1, 1,
+            depthFormat,
             TextureUsage.DepthStencil));
-            
+
         _viewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(_viewDepthTexture, _viewTexture));
-        
+
         // Recreate DepthPass pipelines for new target if needed, but DepthPass currently doesn't support hot-swapping target easily.
         // Actually, DepthPass target is _viewFramebuffer. In Veldrid, if the framebuffer is recreated, the pipeline is still compatible if OutputDescription is same.
         // Swapchain format usually doesn't change on resize.
     }
-    
+
     public IntPtr GetGameViewTextureId()
     {
         if (_viewTexture == null) return IntPtr.Zero;
@@ -160,7 +169,7 @@ public class Renderer
         while (_window.Exists)
         {
             Time.Update();
-            
+
             var snapshot = _window.PumpEvents();
             if (!_window.Exists) break;
 
@@ -169,17 +178,17 @@ public class Renderer
                 System.Threading.Thread.Sleep(10);
                 continue;
             }
-            
+
             onUpdate?.Invoke(Time.DeltaTime);
 
             ShowLightHeatmap = _editorManager.ShowLightHeatmap;
             EnableShadows = _editorManager.ShowShadows;
 
             _viewportWindow.Update(Time.DeltaTime);
-            
+
             InputManager.Update(snapshot);
             _editorManager.Update(Time.DeltaTime, snapshot);
-            
+
             var camera = _viewportWindow.Camera;
             var screenSize = new Vector2(ViewportWidth, ViewportHeight);
             int debugMode = ShowLightHeatmap ? 1 : 0;
@@ -187,23 +196,51 @@ public class Renderer
             if (camera != null)
             {
                 _scenePass.Update(camera);
-                
+
                 var lights = new List<SceneNode>(_scenePass.VisibleLights);
                 _shadowAtlas.UpdateAllocations(lights, camera, _scenePass, EnableShadows);
+
+                // Update CSM for sunlight
+                Vector3 sunDir = new Vector3(0.2f, -1.0f, 0.3f); // Default
+                bool sunFound = false;
+                if (EnableShadows)
+                {
+                    foreach (var node in _scenePass.LightNodes)
+                    {
+                        if (node.Light?.Type == 1 && node.IsVisible && node.Light.CastShadows)
+                        {
+                            sunDir = Vector3.TransformNormal(new Vector3(0, 0, -1), _scenePass.TryGetWorldTransform(node, out var world) ? world : Matrix4x4.Identity);
+                            sunFound = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (sunFound)
+                {
+                    _csmAtlas.UpdateCascades(camera, sunDir);
+                    _csmUniformBuffer.Update(_window.graphicsDevice, _csmAtlas);
+                }
+                else
+                {
+                    // If no sun or shadows disabled, we should probably clear the cascades or disable CSM set binding
+                    // For now, sunFound = false will skip CSM rendering below.
+                }
+                _sunActiveThisFrame = sunFound;
             }
-            
+
             _cl.Begin();
-            
+
             if (camera != null)
             {
                 _scenePass.PrepareRender(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
             }
-            
+
             _cl.End();
             _window.graphicsDevice.SubmitCommands(_cl);
-            
+
             _cl.Begin();
-            
+
             // Clear Shadow Maps
             for (int i = 0; i < _shadowAtlas.GetLayerCount(); i++)
             {
@@ -215,18 +252,24 @@ public class Renderer
             if (camera != null)
             {
                 _shadowPass.Render(_window.graphicsDevice, _cl, _shadowAtlas, _scenePass);
+                if (_sunActiveThisFrame)
+                {
+                    _csmPass.Render(_cl, _csmAtlas, _scenePass);
+                }
             }
-            
+
             // Main Pass - Render to Game View Framebuffer
             _cl.SetFramebuffer(_viewFramebuffer);
             _cl.ClearColorTarget(0, RgbaFloat.Black);
             _cl.ClearDepthStencil(1.0f);
-            
+
             if (camera != null)
             {
                 _depthPass.Render(_cl, _scenePass, camera);
             }
-            
+
+            _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
+
             foreach (var pass in _passes)
             {
                 pass.Render(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
@@ -262,7 +305,7 @@ public class Renderer
 
             _cl.End();
             _window.graphicsDevice.SubmitCommands(_cl);
-            
+
             _window.graphicsDevice.SwapBuffers(_window.graphicsDevice.MainSwapchain);
         }
     }
@@ -292,7 +335,7 @@ public class Renderer
         ImGuizmo.SetOrthographic(false);
         ImGuizmo.SetDrawlist();
         ImGuizmo.SetRect(_viewportWindow.Position.X, _viewportWindow.Position.Y, _viewportWindow.Size.X, _viewportWindow.Size.Y);
-        
+
         if (_editorManager.SnapEnabled)
         {
             Vector3 snap = new Vector3(_editorManager.SnapValue);
@@ -306,7 +349,7 @@ public class Renderer
 
         bool isUsing = ImGuizmo.IsUsing();
         _scenePass.IsGizmoActive = isUsing; // Update GltfPass with gizmo state
-        
+
         if (isUsing)
         {
             _scenePass.ApplyWorldTransform(_selectedNode, gizmoTransform);
@@ -329,7 +372,7 @@ public class Renderer
             Console.WriteLine($"Renderer failed to load scene: {ex.Message}");
         }
     }
-    
+
     public void InstantiateAsset(string path) => _editorManager.InstantiateAsset(path);
 
     public void Dispose()
@@ -337,6 +380,9 @@ public class Renderer
         _scenePass.Dispose();
         _depthPass.Dispose();
         _shadowPass.Dispose();
+        _csmPass.Dispose();
+        _csmAtlas.Dispose();
+        _csmUniformBuffer.Dispose();
         _shadowAtlas.Dispose();
         _immediateRenderer.Dispose();
         _editorManager.Dispose();

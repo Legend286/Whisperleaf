@@ -87,6 +87,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     public bool IsGizmoActive { get; set; }
 
+    public ResourceSet? CsmResourceSet { get; set; }
+
     public IReadOnlyList<MeshInstance> MeshInstances => _meshInstances;
     
     public GeometryBuffer GeometryBuffer => _geometryBuffer;
@@ -191,7 +193,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
     }
 
-    public GltfPass(GraphicsDevice gd, ResourceLayout shadowAtlasLayout) {
+    public GltfPass(GraphicsDevice gd, ResourceLayout shadowAtlasLayout, ResourceLayout csmLayout) {
         _gd = gd;
         _geometryBuffer = new GeometryBuffer(gd);
 
@@ -227,7 +229,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 _lightBuffer.ParamLayout,
                 _shadowDataBuffer.Layout,
                 shadowAtlasLayout,
-                _lightCullReadLayout
+                _lightCullReadLayout,
+                csmLayout
             },
             depthWrite: false
         );
@@ -775,6 +778,10 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
 
         cl.SetGraphicsResourceSet(8, _lightCullReadResourceSet);
+
+        if (CsmResourceSet != null) {
+            cl.SetGraphicsResourceSet(9, CsmResourceSet);
+        }
 
         cl.SetVertexBuffer(0, _geometryBuffer.VertexBuffer);
         cl.SetIndexBuffer(_geometryBuffer.IndexBuffer, IndexFormat.UInt32);

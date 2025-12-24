@@ -13,6 +13,7 @@ layout(set = 3, binding = 0) uniform MaterialParams {
     int   u_UsePackedRMA;
     float u_AlphaCutoff;
     int   u_AlphaMode;
+    vec3  u_MPadding;
 };
 
 void main()
