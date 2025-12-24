@@ -163,6 +163,10 @@ public class MeshReference
 public class MaterialReference
 {
     public string Name { get; set; } = string.Empty;
+    
+    // If set, this overrides the embedded properties
+    public string? AssetPath { get; set; }
+    
     public Vector4 BaseColorFactor { get; set; } = Vector4.One;
     public Vector3 EmissiveFactor { get; set; } = Vector3.Zero;
     public float MetallicFactor { get; set; } = 1.0f;

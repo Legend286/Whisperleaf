@@ -14,6 +14,11 @@ namespace Whisperleaf.AssetPipeline
         public float MetallicFactor = 1f;
         public float RoughnessFactor = 1f;
         public Vector3 EmissiveFactor = Vector3.Zero;
+        
+        public AlphaMode AlphaMode = AlphaMode.Opaque;
+        public float AlphaCutoff = 0.5f;
+        
+        public string? AssetPath;
 
         // CPU-side file paths
         public string? BaseColorPath;

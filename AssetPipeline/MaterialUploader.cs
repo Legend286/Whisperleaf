@@ -65,7 +65,9 @@ public static class MaterialUploader
             mat.EmissiveFactor,
             mat.MetallicFactor,
             mat.RoughnessFactor,
-            mat.UsePackedRMA
+            mat.UsePackedRMA,
+            mat.AlphaCutoff,
+            (int)mat.AlphaMode
         );
 
         // Debug: Log material params

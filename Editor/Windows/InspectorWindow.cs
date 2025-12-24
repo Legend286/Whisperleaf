@@ -16,6 +16,8 @@ public class InspectorWindow : EditorWindow
 
     public event Action<OPERATION>? GizmoOperationChanged;
     public event Action? NodePropertyChanged;
+    public event Action<SceneNode, string>? MaterialDropped;
+    public event Action<int>? MaterialDoubleClicked;
 
     public OPERATION CurrentOperation => _gizmoOperation;
 
@@ -116,7 +118,30 @@ public class InspectorWindow : EditorWindow
 
                 var bounds = node.Mesh.AABBMax - node.Mesh.AABBMin;
                 ImGui.Text($"Bounds: ({bounds.X:F2}, {bounds.Y:F2}, {bounds.Z:F2})");
-                ImGui.Text($"Material: {node.Mesh.MaterialIndex}");
+                
+                // Material Slot
+                ImGui.Button($"Material: {node.Mesh.MaterialIndex}", new Vector2(ImGui.GetContentRegionAvail().X, 0));
+                
+                if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                {
+                    MaterialDoubleClicked?.Invoke(node.Mesh.MaterialIndex);
+                }
+                
+                if (ImGui.BeginDragDropTarget())
+                {
+                    unsafe {
+                        var payload = ImGui.AcceptDragDropPayload("ASSET_PATH");
+                        if (payload.NativePtr != null)
+                        {
+                            string droppedPath = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(payload.Data);
+                            if (droppedPath.EndsWith(".wlmat", StringComparison.OrdinalIgnoreCase))
+                            {
+                                MaterialDropped?.Invoke(node, droppedPath);
+                            }
+                        }
+                    }
+                    ImGui.EndDragDropTarget();
+                }
 
                 ImGui.TreePop();
             }

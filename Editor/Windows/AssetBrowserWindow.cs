@@ -19,6 +19,7 @@ public class AssetBrowserWindow : EditorWindow
     private float _padding = 8.0f;
     
     public event Action<SceneAsset, bool>? OnSceneSelected; // Legacy support
+    public event Action<string>? OnMaterialSelected;
 
     public AssetBrowserWindow(ThumbnailGenerator thumbs)
     {
@@ -111,8 +112,9 @@ public class AssetBrowserWindow : EditorWindow
                 string ext = Path.GetExtension(file).ToLowerInvariant();
                 bool isMesh = ext == ".wlmesh";
                 bool isTex = ext == ".wltex";
+                bool isMat = ext == ".wlmat";
                 
-                if (!isMesh && !isTex) continue;
+                if (!isMesh && !isTex && !isMat) continue;
 
                 ImGui.TableNextColumn();
                 string fileName = Path.GetFileNameWithoutExtension(file);
@@ -120,7 +122,8 @@ public class AssetBrowserWindow : EditorWindow
                 ImGui.PushID(file);
                 
                 // Get Thumbnail
-                IntPtr thumbId = _thumbs.GetThumbnail(file, isTex ? AssetType.Texture : AssetType.Mesh);
+                IntPtr thumbId = IntPtr.Zero;
+                if (!isMat) thumbId = _thumbs.GetThumbnail(file, isTex ? AssetType.Texture : AssetType.Mesh);
                 
                 if (thumbId != IntPtr.Zero)
                 {
@@ -128,19 +131,41 @@ public class AssetBrowserWindow : EditorWindow
                 }
                 else
                 {
-                    ImGui.Button($"{(isMesh ? "🧊" : "🎨")}\n{fileName}", new Vector2(_thumbnailSize, _thumbnailSize));
+                    string icon = isMesh ? "🧊" : (isTex ? "🎨" : "🔮");
+                    ImGui.Button($"{icon}\n{fileName}", new Vector2(_thumbnailSize, _thumbnailSize));
+                }
+
+                // Interaction
+                if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                {
+                    if (isMat) OnMaterialSelected?.Invoke(file);
+                    else if (isMesh) 
+                    {
+                        // Current InstantiateAsset logic relies on drag drop mainly, or we could add double click to instantiate
+                        DragDropPayload.CurrentAssetPath = file; // Fallback
+                    }
                 }
 
                 // Drag Source
-                if (isMesh) // Only models allow drag drop currently
+                if (ImGui.BeginDragDropSource())
                 {
-                    if (ImGui.BeginDragDropSource())
+                    DragDropPayload.CurrentAssetPath = file;
+                    // Send path as C-string for other windows (Material Editor)
+                    IntPtr pStr = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi(file);
+                    try 
                     {
-                        DragDropPayload.CurrentAssetPath = file;
-                        ImGui.Text(fileName);
-                        ImGui.SetDragDropPayload("ASSET_BROWSER_ITEM", IntPtr.Zero, 0);
-                        ImGui.EndDragDropSource();
+                        ImGui.SetDragDropPayload("ASSET_PATH", pStr, (uint)file.Length + 1);
                     }
+                    finally 
+                    {
+                        System.Runtime.InteropServices.Marshal.FreeHGlobal(pStr);
+                    }
+                    
+                    // Also support legacy internal payload
+                    ImGui.SetDragDropPayload("ASSET_BROWSER_ITEM", IntPtr.Zero, 0);
+                    
+                    ImGui.Text(fileName);
+                    ImGui.EndDragDropSource();
                 }
 
                 ImGui.TextWrapped(fileName);

@@ -99,6 +99,43 @@ namespace Whisperleaf.Graphics.Loaders
                 }
 
                 materials.Add(m);
+
+                // Auto-save .wlmat
+                try 
+                {
+                    string safeName = string.Join("_", m.Name.Split(Path.GetInvalidFileNameChars()));
+                    if (string.IsNullOrWhiteSpace(safeName)) safeName = "unnamed_material";
+                    
+                    string matPath = Path.Combine(modelDir, safeName + ".wlmat");
+                    
+                    var matAsset = new MaterialAsset {
+                        Name = m.Name,
+                        BaseColorFactor = m.BaseColorFactor,
+                        EmissiveFactor = m.EmissiveFactor,
+                        MetallicFactor = m.MetallicFactor,
+                        RoughnessFactor = m.RoughnessFactor,
+                        AlphaMode = AlphaMode.Opaque,
+                        AlphaCutoff = 0.5f,
+                        BaseColorTexture = m.BaseColorPath,
+                        NormalTexture = m.NormalPath,
+                        EmissiveTexture = m.EmissivePath,
+                        RMATexture = m.UsePackedRMA ? m.MetallicPath : null 
+                    };
+                    
+                    // Simple heuristic for alpha
+                    if (aim.HasOpacity && aim.Opacity < 0.99f) matAsset.AlphaMode = AlphaMode.Blend;
+                    if (m.Name.Contains("leaf", StringComparison.OrdinalIgnoreCase) || m.Name.Contains("foliage", StringComparison.OrdinalIgnoreCase))
+                    {
+                        matAsset.AlphaMode = AlphaMode.Mask;
+                    }
+
+                    matAsset.Save(matPath);
+                    Console.WriteLine($"[Assimp] Saved material asset: {matPath}");
+                } 
+                catch (Exception ex) 
+                {
+                    Console.WriteLine($"[Assimp] Failed to save material asset: {ex.Message}");
+                }
             }
 
             // ----- Meshes (Direct 1:1 mapping)

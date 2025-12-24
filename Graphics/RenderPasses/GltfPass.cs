@@ -86,6 +86,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     public bool IsGizmoActive { get; set; }
 
     public IReadOnlyList<MeshInstance> MeshInstances => _meshInstances;
+    
+    public GeometryBuffer GeometryBuffer => _geometryBuffer;
 
     public IReadOnlyList<SceneNode> LightNodes => _lightNodes;
 
@@ -102,6 +104,52 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             MaterialIndex = materialIndex;
             TransformIndex = transformIndex;
             Node = node;
+        }
+    }
+
+    public MaterialData? GetMaterial(int index) {
+        if (index >= 0 && index < _materials.Count) {
+            return _materials[index];
+        }
+        return null;
+    }
+
+    public void UpdateMaterial(string path, MaterialAsset asset)
+    {
+        foreach (var mat in _materials)
+        {
+            if (string.Equals(mat.AssetPath, path, StringComparison.OrdinalIgnoreCase))
+            {
+                // Clean up old GPU resources
+                mat.Dispose();
+                
+                // Update Data
+                mat.Name = asset.Name;
+                mat.BaseColorFactor = asset.BaseColorFactor;
+                mat.EmissiveFactor = asset.EmissiveFactor;
+                mat.MetallicFactor = asset.MetallicFactor;
+                mat.RoughnessFactor = asset.RoughnessFactor;
+                mat.AlphaMode = asset.AlphaMode;
+                mat.AlphaCutoff = asset.AlphaCutoff;
+                
+                mat.BaseColorPath = asset.BaseColorTexture;
+                mat.NormalPath = asset.NormalTexture;
+                mat.EmissivePath = asset.EmissiveTexture;
+                
+                mat.UsePackedRMA = !string.IsNullOrEmpty(asset.RMATexture);
+                if (mat.UsePackedRMA) {
+                    mat.MetallicPath = asset.RMATexture;
+                    mat.RoughnessPath = asset.RMATexture;
+                    mat.OcclusionPath = asset.RMATexture;
+                } else {
+                    mat.MetallicPath = null;
+                    mat.RoughnessPath = null;
+                    mat.OcclusionPath = null;
+                }
+                
+                // Re-upload
+                MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, mat);
+            }
         }
     }
 
@@ -673,11 +721,14 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             // Bind Material
             var material = ResolveMaterial(batch.MaterialIndex);
 
-            if (material != null) {
-                if (material.ResourceSet != null) cl.SetGraphicsResourceSet(2, material.ResourceSet);
-                if (material.ParamsResourceSet != null) cl.SetGraphicsResourceSet(3, material.ParamsResourceSet);
+            if (material == null || material.ResourceSet == null || material.ParamsResourceSet == null)
+            {
+                // Skip invalid material draws to avoid GPU crash
+                continue;
             }
 
+            cl.SetGraphicsResourceSet(2, material.ResourceSet);
+            cl.SetGraphicsResourceSet(3, material.ParamsResourceSet);
 
             cl.DrawIndexed(
                 batch.Mesh.Range.IndexCount,
@@ -780,48 +831,94 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
         for (int i = 0; i < scene.Materials.Count; i++) {
             var src = scene.Materials[i];
-            string hash = ComputeMaterialHash(src);
+            string hash = "";
+            MaterialData material = null;
+            
+            bool loadedFromFile = false;
 
-            if (_materialCache.TryGetValue(hash, out int globalIndex)) {
-                map[i] = globalIndex;
-
-                continue;
+            if (!string.IsNullOrEmpty(src.AssetPath) && File.Exists(src.AssetPath)) {
+                hash = "FILE:" + src.AssetPath;
+                
+                if (_materialCache.TryGetValue(hash, out int cachedIndex)) {
+                    map[i] = cachedIndex;
+                    continue;
+                }
+                
+                try 
+                {
+                    var asset = MaterialAsset.Load(src.AssetPath);
+                    material = new MaterialData
+                    {
+                        Name = asset.Name,
+                        BaseColorFactor = asset.BaseColorFactor,
+                        EmissiveFactor = asset.EmissiveFactor,
+                        MetallicFactor = asset.MetallicFactor,
+                        RoughnessFactor = asset.RoughnessFactor,
+                        AlphaMode = asset.AlphaMode,
+                        AlphaCutoff = asset.AlphaCutoff,
+                        
+                        BaseColorPath = asset.BaseColorTexture,
+                        NormalPath = asset.NormalTexture,
+                        MetallicPath = asset.RMATexture, 
+                        RoughnessPath = asset.RMATexture,
+                        OcclusionPath = asset.RMATexture,
+                        EmissivePath = asset.EmissiveTexture,
+                        UsePackedRMA = !string.IsNullOrEmpty(asset.RMATexture),
+                        AssetPath = src.AssetPath
+                    };
+                    loadedFromFile = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[GltfPass] Failed to load material asset '{src.AssetPath}': {ex.Message}. Falling back to embedded.");
+                }
             }
 
+            if (!loadedFromFile)
+            {
+                hash = ComputeMaterialHash(src);
 
-            globalIndex = _materials.Count;
-            map[i] = globalIndex;
-            _materialCache[hash] = globalIndex;
+                if (_materialCache.TryGetValue(hash, out int globalIndex)) {
+                    map[i] = globalIndex;
+                    continue;
+                }
 
-            var material = new MaterialData {
-                Name = src.Name,
-                BaseColorFactor = src.BaseColorFactor,
-                EmissiveFactor = src.EmissiveFactor,
-                MetallicFactor = src.MetallicFactor,
-                RoughnessFactor = src.RoughnessFactor,
-                UsePackedRMA = !string.IsNullOrEmpty(src.RMAHash)
-            };
+                material = new MaterialData {
+                    Name = src.Name,
+                    BaseColorFactor = src.BaseColorFactor,
+                    EmissiveFactor = src.EmissiveFactor,
+                    MetallicFactor = src.MetallicFactor,
+                    RoughnessFactor = src.RoughnessFactor,
+                    UsePackedRMA = !string.IsNullOrEmpty(src.RMAHash)
+                };
 
-            material.BaseColorPath = ResolveCachedTexture(src.BaseColorHash);
-            material.NormalPath = ResolveCachedTexture(src.NormalHash);
-            material.EmissivePath = ResolveCachedTexture(src.EmissiveHash);
+                material.BaseColorPath = ResolveCachedTexture(src.BaseColorHash);
+                material.NormalPath = ResolveCachedTexture(src.NormalHash);
+                material.EmissivePath = ResolveCachedTexture(src.EmissiveHash);
 
-            if (material.EmissivePath != null && material.EmissiveFactor == Vector3.Zero) {
-                material.EmissiveFactor = Vector3.One;
+                if (material.EmissivePath != null && material.EmissiveFactor == Vector3.Zero) {
+                    material.EmissiveFactor = Vector3.One;
+                }
+
+
+                var rmaPath = ResolveCachedTexture(src.RMAHash);
+
+                if (material.UsePackedRMA && rmaPath != null) {
+                    material.MetallicPath = rmaPath;
+                    material.RoughnessPath = rmaPath;
+                    material.OcclusionPath = rmaPath;
+                }
             }
+            
+            if (material != null)
+            {
+                int newIndex = _materials.Count;
+                map[i] = newIndex;
+                _materialCache[hash] = newIndex;
 
-
-            var rmaPath = ResolveCachedTexture(src.RMAHash);
-
-            if (material.UsePackedRMA && rmaPath != null) {
-                material.MetallicPath = rmaPath;
-                material.RoughnessPath = rmaPath;
-                material.OcclusionPath = rmaPath;
+                MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, material);
+                _materials.Add(material);
             }
-
-
-            MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, material);
-            _materials.Add(material);
         }
 
 

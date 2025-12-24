@@ -9,6 +9,7 @@ using ImGuizmoNET;
 using ImPlotNET;
 using Veldrid;
 using Veldrid.Sdl2;
+using Whisperleaf.AssetPipeline;
 using Whisperleaf.AssetPipeline.Cache;
 using Whisperleaf.AssetPipeline.Scene;
 using Whisperleaf.Editor.Windows;
@@ -34,6 +35,7 @@ public class EditorManager : IDisposable {
     private readonly StatsWindow _statsWindow;
     private readonly ImportWizardWindow _importWizard;
     private readonly FileDialogWindow _fileDialog;
+    private readonly MaterialEditorWindow _materialEditor;
 
     private readonly ThumbnailGenerator _thumbnailGenerator;
 
@@ -79,6 +81,7 @@ public class EditorManager : IDisposable {
         _statsWindow = new StatsWindow();
         _importWizard = new ImportWizardWindow();
         _fileDialog = new FileDialogWindow();
+        _materialEditor = new MaterialEditorWindow();
 
         _windows.Add(_assetBrowser);
         _windows.Add(_sceneOutliner);
@@ -86,9 +89,14 @@ public class EditorManager : IDisposable {
         _windows.Add(_statsWindow);
         _windows.Add(_importWizard);
         _windows.Add(_fileDialog);
+        _windows.Add(_materialEditor);
 
         // Wire up events
         _assetBrowser.OnSceneSelected += OnSceneLoaded;
+        _assetBrowser.OnMaterialSelected += path => {
+             _materialEditor.OpenMaterial(path);
+             // Ensure window is visible (handled inside OpenMaterial, but maybe check menu state?)
+        };
         _importWizard.OnImportComplete += OnImportComplete;
         window.DragDrop += OnWindowDragDrop;
         
@@ -99,6 +107,48 @@ public class EditorManager : IDisposable {
         
         _inspector.GizmoOperationChanged += OnGizmoOperationChanged;
         _inspector.NodePropertyChanged += () => RequestRefresh?.Invoke();
+        _inspector.MaterialDropped += (node, path) =>
+        {
+            if (_currentScene == null || node.Mesh == null) return;
+
+            int foundIndex = -1;
+            // Check if this material asset is already referenced in the scene
+            for (int i = 0; i < _currentScene.Materials.Count; i++)
+            {
+                if (string.Equals(_currentScene.Materials[i].AssetPath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    foundIndex = i;
+                    break;
+                }
+            }
+
+            if (foundIndex == -1)
+            {
+                // Load asset to get name, create reference
+                try 
+                {
+                    var matAsset = MaterialAsset.Load(path);
+                    var matRef = new MaterialReference
+                    {
+                        Name = matAsset.Name,
+                        AssetPath = path
+                    };
+                    foundIndex = _currentScene.Materials.Count;
+                    _currentScene.Materials.Add(matRef);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Editor] Failed to assign material: {ex.Message}");
+                    return;
+                }
+            }
+
+            node.Mesh.MaterialIndex = foundIndex;
+            Console.WriteLine($"[Editor] Assigned material '{Path.GetFileName(path)}' to '{node.Name}'");
+            
+            // Trigger reload to update renderer
+            SceneRequested?.Invoke(_currentScene, false);
+        };
         GizmoOperation = _inspector.CurrentOperation;
     }
 
@@ -209,6 +259,11 @@ public class EditorManager : IDisposable {
             GizmoOperation = op;
             GizmoOperationChanged?.Invoke(op);
         }
+    }
+
+    public void OpenMaterialEditor(string path)
+    {
+        _materialEditor.OpenMaterial(path);
     }
 
     public void InstantiateAsset(string path)
@@ -463,6 +518,7 @@ public class EditorManager : IDisposable {
                 bool outlinerOpen = _sceneOutliner.IsOpen;
                 bool inspectorOpen = _inspector.IsOpen;
                 bool statsOpen = _statsWindow.IsOpen;
+                bool materialEditorOpen = _materialEditor.IsOpen;
                 
                 if (ImGui.MenuItem("Asset Browser", null, ref assetBrowserOpen))
                     _assetBrowser.IsOpen = assetBrowserOpen;
@@ -475,6 +531,9 @@ public class EditorManager : IDisposable {
 
                 if (ImGui.MenuItem("Statistics", null, ref statsOpen))
                     _statsWindow.IsOpen = statsOpen;
+
+                if (ImGui.MenuItem("Material Editor", null, ref materialEditorOpen))
+                    _materialEditor.IsOpen = materialEditorOpen;
                 
                 var viewport = _windows.OfType<ViewportWindow>().FirstOrDefault();
                 if (viewport != null)
