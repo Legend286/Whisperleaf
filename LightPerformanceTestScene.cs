@@ -105,7 +105,7 @@ public class LightPerformanceTestScene
                     Intensity = 5.0f, 
                     Color = color,
                     Range = 20.0f,
-                    CastShadows = i % 2 == 0,
+                    CastShadows = i % 1 == 0,
                 },
                 LocalTransform = Matrix4x4.CreateTranslation(initialPos),
                 IsStatic = false // Needs to be non-static to update transform easily in some systems

@@ -219,14 +219,13 @@ public class Renderer
             
             // Main Pass - Render to Game View Framebuffer
             _cl.SetFramebuffer(_viewFramebuffer);
+            _cl.ClearColorTarget(0, RgbaFloat.Black);
             _cl.ClearDepthStencil(1.0f);
             
             if (camera != null)
             {
                 _depthPass.Render(_cl, _scenePass, camera);
             }
-
-            _cl.ClearColorTarget(0, RgbaFloat.Black);
             
             foreach (var pass in _passes)
             {

@@ -1,0 +1,112 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Set 0: Structured buffer of all shadow face matrices
+layout(std430, set = 0, binding = 0) readonly buffer ShadowFaces {
+    mat4 u_ViewProjs[];
+};
+
+layout(std140, set = 1, binding = 0) buffer ModelTransforms {
+    mat4 u_Model[];
+};
+
+struct BatchInfo {
+    uint InstanceStart; 
+    uint InstanceCount;
+    uint VisibleOffset; 
+    uint MeshIndex;
+    vec4 AABBMin;
+    vec4 AABBMax;
+};
+
+layout(std430, set = 2, binding = 0) readonly buffer BatchData {
+    BatchInfo batches[];
+};
+
+layout(std430, set = 2, binding = 1) readonly buffer InstanceBatchMap {
+    uint u_InstanceToBatch[];
+};
+
+struct DrawCommand {
+    uint IndexCount;
+    uint InstanceCount;
+    uint FirstIndex;
+    int  VertexOffset;
+    uint FirstInstance;
+};
+
+layout(std430, set = 3, binding = 0) buffer DrawCommands {
+    DrawCommand commands[];
+};
+
+layout(std430, set = 4, binding = 0) buffer VisibleInstances {
+    uint u_VisibleIndices[];
+};
+
+layout(set = 5, binding = 0) uniform CullParams {
+    uint u_TotalInstances;
+    uint u_NumBatches;
+};
+
+// Row access helper
+vec4 GetRow(mat4 M, int i) {
+    return vec4(M[0][i], M[1][i], M[2][i], M[3][i]);
+}
+
+bool IsAABBVisible(vec3 min, vec3 max, vec4 planes[6]) {
+    for (int i = 0; i < 6; i++) {
+        vec3 p = min;
+        if (planes[i].x >= 0) p.x = max.x;
+        if (planes[i].y >= 0) p.y = max.y;
+        if (planes[i].z >= 0) p.z = max.z;
+
+        if (dot(planes[i].xyz, p) + planes[i].w < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    uint instanceID = gl_GlobalInvocationID.x;
+    uint faceID = gl_GlobalInvocationID.y;
+    
+    if (instanceID >= u_TotalInstances) return;
+
+    uint batchID = u_InstanceToBatch[instanceID];
+    BatchInfo batch = batches[batchID];
+    
+    mat4 model = u_Model[instanceID];
+
+    vec3 center = (batch.AABBMin.xyz + batch.AABBMax.xyz) * 0.5;
+    vec3 extents = (batch.AABBMax.xyz - batch.AABBMin.xyz) * 0.5;
+    
+    vec3 worldCenter = (model * vec4(center, 1.0)).xyz;
+    
+    mat3 absModel = mat3(abs(model[0].xyz), abs(model[1].xyz), abs(model[2].xyz));
+    vec3 worldExtents = absModel * extents;
+
+    vec3 worldMin = worldCenter - worldExtents;
+    vec3 worldMax = worldCenter + worldExtents;
+
+    // Extract planes for this face
+    mat4 M = u_ViewProjs[faceID];
+    vec4 planes[6];
+    planes[0] = GetRow(M, 3) + GetRow(M, 0);
+    planes[1] = GetRow(M, 3) - GetRow(M, 0);
+    planes[2] = GetRow(M, 3) + GetRow(M, 1);
+    planes[3] = GetRow(M, 3) - GetRow(M, 1);
+    planes[4] = GetRow(M, 3) + GetRow(M, 2);
+    planes[5] = GetRow(M, 3) - GetRow(M, 2);
+    for (int i = 0; i < 6; i++) planes[i] /= length(planes[i].xyz);
+    
+    if (IsAABBVisible(worldMin, worldMax, planes)) {
+        // Unique range per face
+        uint cmdIdx = faceID * u_NumBatches + batchID;
+        uint count = atomicAdd(commands[cmdIdx].InstanceCount, 1);
+        
+        uint visIdx = faceID * u_TotalInstances + batch.VisibleOffset + count;
+        u_VisibleIndices[visIdx] = instanceID;
+    }
+}

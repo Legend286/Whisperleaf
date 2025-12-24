@@ -23,10 +23,10 @@ public class ShadowAtlas : IDisposable {
     private Sampler _sampler;
 
     private const int TextureSize = 2048;
-    private const int ArrayLayers = 7;
+    private const int ArrayLayers = 8;
 
     // Page configurations (Grid Size N means N*N tiles)
-    private readonly int[] _pageGrids = new[] { 2, 2, 4, 8, 16, 32, 64 };
+    private readonly int[] _pageGrids = new[] { 2, 2, 4, 8, 8, 16, 16, 32 };
 
     // Allocations per frame
     private readonly Dictionary<SceneNode, ShadowAllocation[]> _allocations = new();
