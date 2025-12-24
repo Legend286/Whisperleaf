@@ -85,9 +85,12 @@ public class MaterialEditorWindow : EditorWindow
         // Dirty indicator
         if (_dirty) ImGui.TextColored(new Vector4(1, 1, 0, 1), "* Unsaved Changes");
         
-        if (ImGui.Button("Save") && _currentPath != null)
+        if (ImGui.Button("Save"))
         {
-            SaveMaterial();
+            if (_currentPath != null)
+                SaveMaterial();
+            else
+                Console.WriteLine("[MaterialEditor] No file path set. Use 'File > Save As'.");
         }
         ImGui.SameLine();
 

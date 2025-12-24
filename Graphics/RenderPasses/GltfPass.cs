@@ -120,10 +120,15 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         {
             if (string.Equals(mat.AssetPath, path, StringComparison.OrdinalIgnoreCase))
             {
-                // Clean up old GPU resources
-                mat.Dispose();
-                
-                // Update Data
+                // Check if textures changed
+                bool texturesChanged = 
+                    !string.Equals(mat.BaseColorPath, asset.BaseColorTexture, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(mat.NormalPath, asset.NormalTexture, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(mat.EmissivePath, asset.EmissiveTexture, StringComparison.OrdinalIgnoreCase) ||
+                    (mat.UsePackedRMA && !string.Equals(mat.MetallicPath, asset.RMATexture, StringComparison.OrdinalIgnoreCase)) ||
+                    (!mat.UsePackedRMA && !string.IsNullOrEmpty(asset.RMATexture));
+
+                // Update CPU Data
                 mat.Name = asset.Name;
                 mat.BaseColorFactor = asset.BaseColorFactor;
                 mat.EmissiveFactor = asset.EmissiveFactor;
@@ -136,8 +141,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 mat.NormalPath = asset.NormalTexture;
                 mat.EmissivePath = asset.EmissiveTexture;
                 
-                mat.UsePackedRMA = !string.IsNullOrEmpty(asset.RMATexture);
-                if (mat.UsePackedRMA) {
+                bool usePacked = !string.IsNullOrEmpty(asset.RMATexture);
+                if (usePacked) {
                     mat.MetallicPath = asset.RMATexture;
                     mat.RoughnessPath = asset.RMATexture;
                     mat.OcclusionPath = asset.RMATexture;
@@ -146,9 +151,32 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                     mat.RoughnessPath = null;
                     mat.OcclusionPath = null;
                 }
-                
-                // Re-upload
-                MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, mat);
+                mat.UsePackedRMA = usePacked;
+
+                if (texturesChanged)
+                {
+                    // Heavy update
+                    _gd.WaitForIdle();
+                    mat.Dispose();
+                    MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, mat);
+                }
+                else
+                {
+                    // Light update (Params only)
+                    if (mat.ParamsBuffer != null)
+                    {
+                        var materialParams = new MaterialParams(
+                            mat.BaseColorFactor,
+                            mat.EmissiveFactor,
+                            mat.MetallicFactor,
+                            mat.RoughnessFactor,
+                            mat.UsePackedRMA,
+                            mat.AlphaCutoff,
+                            (int)mat.AlphaMode
+                        );
+                        _gd.UpdateBuffer(mat.ParamsBuffer, 0, ref materialParams);
+                    }
+                }
             }
         }
     }

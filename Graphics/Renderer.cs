@@ -58,6 +58,8 @@ public class Renderer
         _editorManager = new EditorManager(_window.graphicsDevice, _window.SdlWindow);
         _editorManager.SceneNodeSelected += OnSceneNodeSelected;
         _editorManager.GizmoOperationChanged += operation => _gizmoOperation = operation;
+        _editorManager.ResolveMaterialPath = idx => _scenePass.GetMaterial(idx)?.AssetPath;
+        _editorManager.MaterialUpdated += (path, asset) => _scenePass.UpdateMaterial(path, asset);
         _gizmoOperation = _editorManager.GizmoOperation;
 
         _shadowAtlas = new ShadowAtlas(_window.graphicsDevice);

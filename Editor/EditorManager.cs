@@ -48,6 +48,8 @@ public class EditorManager : IDisposable {
     public event Action<OPERATION>? GizmoOperationChanged;
     
     public event Action? RequestRefresh;
+    public event Action<string, MaterialAsset>? MaterialUpdated;
+    public Func<int, string?>? ResolveMaterialPath;
 
     public OPERATION GizmoOperation { get; private set; } = OPERATION.TRANSLATE;
 
@@ -149,6 +151,23 @@ public class EditorManager : IDisposable {
             // Trigger reload to update renderer
             SceneRequested?.Invoke(_currentScene, false);
         };
+        _inspector.MaterialDoubleClicked += index => {
+            if (ResolveMaterialPath != null)
+            {
+                var path = ResolveMaterialPath(index);
+                if (!string.IsNullOrEmpty(path))
+                {
+                    _materialEditor.OpenMaterial(path);
+                }
+                else
+                {
+                    Console.WriteLine($"[Editor] Cannot open material {index}: No asset path (embedded material). Re-import model to generate .wlmat assets.");
+                }
+            }
+        };
+        
+        _materialEditor.MaterialChanged += (path, asset) => MaterialUpdated?.Invoke(path, asset);
+        
         GizmoOperation = _inspector.CurrentOperation;
     }
 

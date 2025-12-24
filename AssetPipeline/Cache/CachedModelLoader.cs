@@ -82,6 +82,57 @@ public static class CachedModelLoader
             mat.OcclusionPath = null;
             mat.UsePackedRMA = true;
 
+            // Generate and Save .wlmat
+            try 
+            {
+                string safeMatName = string.Join("_", mat.Name.Split(Path.GetInvalidFileNameChars()));
+                if (string.IsNullOrWhiteSpace(safeMatName)) safeMatName = "unnamed";
+                
+                string fileName = $"Material_{i}_{safeMatName}.wlmat";
+                
+                // Determine directory: prefer same as textures
+                string? dir = null;
+                if (!string.IsNullOrEmpty(mat.BaseColorPath)) dir = Path.GetDirectoryName(mat.BaseColorPath);
+                
+                // Fallback
+                if (string.IsNullOrEmpty(dir)) {
+                     dir = Path.Combine(AssetCache.CacheRoot, sceneName, "meshes", owningMeshName);
+                }
+                
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string fullPath = Path.Combine(dir, fileName);
+                
+                var asset = new MaterialAsset {
+                    Name = mat.Name,
+                    BaseColorFactor = mat.BaseColorFactor,
+                    EmissiveFactor = mat.EmissiveFactor,
+                    MetallicFactor = mat.MetallicFactor,
+                    RoughnessFactor = mat.RoughnessFactor,
+                    AlphaMode = AlphaMode.Opaque,
+                    AlphaCutoff = 0.5f,
+                    BaseColorTexture = mat.BaseColorPath,
+                    NormalTexture = mat.NormalPath,
+                    EmissiveTexture = mat.EmissivePath,
+                    RMATexture = mat.MetallicPath
+                };
+                
+                if (mat.BaseColorFactor.W < 0.99f) asset.AlphaMode = AlphaMode.Blend;
+                if (mat.Name.Contains("leaf", StringComparison.OrdinalIgnoreCase) || mat.Name.Contains("foliage", StringComparison.OrdinalIgnoreCase))
+                {
+                    asset.AlphaMode = AlphaMode.Mask;
+                }
+
+                asset.Save(fullPath);
+                mat.AssetPath = fullPath;
+                mat.AlphaMode = asset.AlphaMode; // Sync runtime data
+                
+                Console.WriteLine($"[CachedModelLoader] Saved material: {fullPath}");
+            } 
+            catch (Exception ex) 
+            {
+                Console.WriteLine($"[CachedModelLoader] Error saving .wlmat: {ex.Message}");
+            }
+
             cachedMaterials.Add(mat);
         }
 

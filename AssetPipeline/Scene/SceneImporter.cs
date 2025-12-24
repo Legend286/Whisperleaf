@@ -78,7 +78,8 @@ public static class SceneImporter
                 BaseColorHash = mat.BaseColorHash,
                 NormalHash = mat.NormalHash,
                 RMAHash = mat.RMAHash,
-                EmissiveHash = mat.EmissiveHash
+                EmissiveHash = mat.EmissiveHash,
+                AssetPath = mat.AssetPath
             });
         }
 
