@@ -59,7 +59,9 @@ namespace Whisperleaf.AssetPipeline
         {
             // 1. Dispose ResourceSets (descriptors) first, as they reference the views.
             ResourceSet?.Dispose();
+            ResourceSet = null;
             ParamsResourceSet?.Dispose();
+            ParamsResourceSet = null;
 
             // 2. Dispose TextureViews (VkImageView) before the Textures (VkImage).
             //    Vulkan requirement: ImageView must be destroyed before the Image it points to.

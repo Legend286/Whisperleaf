@@ -21,7 +21,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private readonly GraphicsDevice _gd;
     private readonly Pipeline _pipeline;
     private readonly CameraUniformBuffer _cameraBuffer;
-    private readonly ModelUniformBuffer _modelBuffer;
+    private readonly ModelUniformBuffer _modelBuffer; // Full set for MDI/Culling
+    private readonly ModelUniformBuffer _compactModelBuffer; // Visible set for main pass
     private readonly LightUniformBuffer _lightBuffer;
     private readonly ShadowDataBuffer _shadowDataBuffer;
     private readonly GeometryBuffer _geometryBuffer;
@@ -82,12 +83,17 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     public long SourceIndices { get; private set; }
 
     public long TotalSceneTriangles { get; private set; }
+    public int StructureVersion { get; private set; }
 
     public bool IsGizmoActive { get; set; }
 
     public IReadOnlyList<MeshInstance> MeshInstances => _meshInstances;
     
     public GeometryBuffer GeometryBuffer => _geometryBuffer;
+
+    public ModelUniformBuffer ModelBuffer => _modelBuffer;
+    
+    public CameraUniformBuffer CameraBuffer => _cameraBuffer;
 
     public IReadOnlyList<SceneNode> LightNodes => _lightNodes;
 
@@ -191,6 +197,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
         _cameraBuffer = new CameraUniformBuffer(gd);
         _modelBuffer = new ModelUniformBuffer(gd);
+        _compactModelBuffer = new ModelUniformBuffer(gd);
         _lightBuffer = new LightUniformBuffer(gd);
         _shadowDataBuffer = new ShadowDataBuffer(gd);
 
@@ -221,7 +228,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 _shadowDataBuffer.Layout,
                 shadowAtlasLayout,
                 _lightCullReadLayout
-            }
+            },
+            depthWrite: false
         );
     }
 
@@ -638,9 +646,31 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
     }
 
+    public void UpdateModelBuffer() {
+        if (_meshInstances.Count == 0) return;
+        
+        // This array alloc every frame is not ideal, but for now it ensures correctness.
+        // Optimization: Keep a persistent array or update visible only (but compute cull needs all?)
+        var uniforms = new ModelUniform[_meshInstances.Count];
+        
+        for (int i = 0; i < _meshInstances.Count; i++) {
+            var inst = _meshInstances[i];
+            if (_nodeWorldTransforms.TryGetValue(inst.Node, out var world)) {
+                uniforms[i] = new ModelUniform(world);
+            } else {
+                uniforms[i] = new ModelUniform(Matrix4x4.Identity);
+            }
+        }
+        
+        _modelBuffer.UpdateAll(uniforms);
+    }
+
     public void PrepareRender(GraphicsDevice gd, CommandList cl, Camera? camera, Vector2 screenSize, int debugMode)
     {
         if (camera == null) return;
+        
+        // Ensure ModelBuffer has fresh transforms for DepthPass/ShadowPass (MDI)
+        UpdateModelBuffer();
 
         ResizeLightCullingResources((uint)screenSize.X, (uint)screenSize.Y);
         
@@ -730,12 +760,12 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
 
         // 2. Upload Buffer
-        _modelBuffer.UpdateAll(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_visibleTransforms));
+        _compactModelBuffer.UpdateAll(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_visibleTransforms));
 
         // 3. Draw Pass
         cl.SetPipeline(_pipeline);
         cl.SetGraphicsResourceSet(0, _cameraBuffer.ResourceSet);
-        cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
+        cl.SetGraphicsResourceSet(1, _compactModelBuffer.ResourceSet);
         cl.SetGraphicsResourceSet(4, _lightBuffer.ResourceSet);
         cl.SetGraphicsResourceSet(5, _lightBuffer.ParamResourceSet);
         cl.SetGraphicsResourceSet(6, _shadowDataBuffer.ResourceSet);
@@ -798,11 +828,19 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         
         // Console.WriteLine("[GltfPass] Refreshing Structure...");
 
-        // Sort meshes
+        // Sort meshes: Opaque first, then AlphaMask, then Blend
         _meshInstances.Sort((a, b) =>
         {
-            int cmpMat = a.MaterialIndex.CompareTo(b.MaterialIndex);
+            var matA = GetMaterial(a.MaterialIndex);
+            var matB = GetMaterial(b.MaterialIndex);
+            
+            int modeA = matA != null ? (int)matA.AlphaMode : 0;
+            int modeB = matB != null ? (int)matB.AlphaMode : 0;
+            
+            int cmpMode = modeA.CompareTo(modeB);
+            if (cmpMode != 0) return cmpMode;
 
+            int cmpMat = a.MaterialIndex.CompareTo(b.MaterialIndex);
             if (cmpMat != 0) return cmpMat;
 
             return a.Mesh.GetHashCode().CompareTo(b.Mesh.GetHashCode());
@@ -852,13 +890,34 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
 
 
-                BuildBVH(_staticBvh, _staticIndices);
-                RebuildDynamicBVH(); // Ensure dynamic BVH is also updated immediately
-                
-                _modelBuffer.EnsureCapacity(_meshInstances.Count);        _modelBuffer.UpdateAll(uniforms);
-    }
+                        BuildBVH(_staticBvh, _staticIndices);
 
-    private int[] LoadMaterials(SceneAsset scene) {
+
+                        RebuildDynamicBVH(); // Ensure dynamic BVH is also updated immediately
+
+
+                        
+
+
+                        _modelBuffer.EnsureCapacity(_meshInstances.Count);        
+
+
+                        _modelBuffer.UpdateAll(uniforms);
+
+
+                        
+
+
+                        StructureVersion++;
+
+
+                    }
+
+
+                
+
+
+                    private int[] LoadMaterials(SceneAsset scene) {
         int[] map = new int[scene.Materials.Count];
 
         for (int i = 0; i < scene.Materials.Count; i++) {
@@ -1214,6 +1273,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         ClearResources();
         _cameraBuffer.Dispose();
         _modelBuffer.Dispose();
+        _compactModelBuffer.Dispose();
         _lightBuffer.Dispose();
         _shadowDataBuffer.Dispose();
         _pipeline.Dispose();

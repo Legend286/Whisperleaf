@@ -13,7 +13,8 @@ public class PipelineFactory
         Framebuffer target,
         bool enableDepth = true,
         bool enableBlend = false,
-        ResourceLayout[]? extraLayouts = null)
+        ResourceLayout[]? extraLayouts = null,
+        bool depthWrite = true)
     {
         var factory = gd.ResourceFactory;
         
@@ -25,7 +26,7 @@ public class PipelineFactory
         {
             BlendState = enableBlend ? BlendStateDescription.SingleOverrideBlend : BlendStateDescription.SingleDisabled,
             DepthStencilState = enableDepth
-                ? new DepthStencilStateDescription(true, true, ComparisonKind.LessEqual)
+                ? new DepthStencilStateDescription(true, depthWrite, ComparisonKind.LessEqual)
                 : new DepthStencilStateDescription(false, false, ComparisonKind.Always),
             RasterizerState = new RasterizerStateDescription(
                 FaceCullMode.Front,

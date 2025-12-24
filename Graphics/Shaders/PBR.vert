@@ -49,6 +49,6 @@ void main()
    
     f_UV = v_TexCoord * vec2(1,-1);
 
-    // Clip space
-    gl_Position = u_Proj * u_View * worldPos;
+    // Clip space - Use ViewProj to match Depth pass precision
+    gl_Position = u_ViewProj * worldPos;
 }

@@ -19,7 +19,7 @@ void main()
 {
     float alpha = texture(sampler2D(BaseColorTex, MainSampler), f_UV).a * u_BaseColorFactor.a;
 
-    // Mask Mode = 1
+    // Alpha Mode: Mask = 1
     if (u_AlphaMode == 1 && alpha < u_AlphaCutoff) {
         discard;
     }

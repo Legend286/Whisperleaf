@@ -2,8 +2,12 @@
 
 layout(location = 0) in vec3 v_Position;
 
-layout(set = 0, binding = 0) uniform ViewProjBuffer {
+layout(set = 0, binding = 0) uniform CameraBuffer {
+    mat4 u_View;
+    mat4 u_Proj;
     mat4 u_ViewProj;
+    vec3 u_CameraPos;
+    float _padding;
 };
 
 layout(set = 1, binding = 0) readonly buffer ModelBuffer {

@@ -18,8 +18,15 @@ namespace Whisperleaf.Graphics.Scene.Data
                 (uint)Marshal.SizeOf<CameraUniform>(),
                 BufferUsage.UniformBuffer | BufferUsage.Dynamic));
 
-            _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-                new ResourceLayoutElementDescription("CameraBuffer", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Fragment)));
+                        _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
+
+                            new ResourceLayoutElementDescription(
+
+                                "CameraBuffer",
+
+                                ResourceKind.UniformBuffer,
+
+                                ShaderStages.Vertex | ShaderStages.Fragment | ShaderStages.Compute)));
 
             _resourceSet = factory.CreateResourceSet(new ResourceSetDescription(_layout, _buffer));
         }

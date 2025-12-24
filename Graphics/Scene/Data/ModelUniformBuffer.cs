@@ -28,7 +28,9 @@ namespace Whisperleaf.Graphics.Scene.Data
                 new ResourceLayoutElementDescription(
                     "ModelTransforms",
                     ResourceKind.StructuredBufferReadWrite,
-                    ShaderStages.Vertex)));
+                    ShaderStages.Vertex | ShaderStages.Compute)));
+            
+            // Console.WriteLine("[ModelUniformBuffer] Created layout with Vertex|Compute support.");
 
             // Create buffer large enough for multiple transforms
             _buffer = factory.CreateBuffer(new BufferDescription(

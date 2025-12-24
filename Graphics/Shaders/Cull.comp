@@ -47,32 +47,33 @@ layout(std430, set = 4, binding = 0) buffer VisibleInstances {
     uint u_VisibleIndices[];
 };
 
+// Row access helper (GLSL matrices are column-major, but accessing row is needed for plane extraction)
+vec4 GetRow(mat4 M, int i) {
+    return vec4(M[0][i], M[1][i], M[2][i], M[3][i]);
+}
+
 // Frustum extraction
 vec4 planes[6];
 
 void ExtractPlanes(mat4 M) {
     // Left
-    planes[0] = row(M, 3) + row(M, 0);
+    planes[0] = GetRow(M, 3) + GetRow(M, 0);
     // Right
-    planes[1] = row(M, 3) - row(M, 0);
+    planes[1] = GetRow(M, 3) - GetRow(M, 0);
     // Bottom
-    planes[2] = row(M, 3) + row(M, 1);
+    planes[2] = GetRow(M, 3) + GetRow(M, 1);
     // Top
-    planes[3] = row(M, 3) - row(M, 1);
+    planes[3] = GetRow(M, 3) - GetRow(M, 1);
     // Near
-    planes[4] = row(M, 3) + row(M, 2);
+    planes[4] = GetRow(M, 3) + GetRow(M, 2);
     // Far
-    planes[5] = row(M, 3) - row(M, 2);
+    planes[5] = GetRow(M, 3) - GetRow(M, 2);
 
     for (int i = 0; i < 6; i++) {
         planes[i] /= length(planes[i].xyz);
     }
 }
 
-// Row access helper (GLSL matrices are column-major, but accessing row is needed for plane extraction)
-vec4 row(mat4 M, int i) {
-    return vec4(M[0][i], M[1][i], M[2][i], M[3][i]);
-}
 
 bool IsAABBVisible(vec3 min, vec3 max) {
     // Check box against all 6 planes

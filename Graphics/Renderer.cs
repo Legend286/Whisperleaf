@@ -24,6 +24,7 @@ public class Renderer
     private readonly List<IRenderPass> _passes = new();
     private readonly EditorManager _editorManager;
     private readonly GltfPass _scenePass;
+    private readonly DepthPass _depthPass;
     private readonly ImmediateRenderer _immediateRenderer;
     private readonly ShadowAtlas _shadowAtlas;
     private readonly ShadowPass _shadowPass;
@@ -82,6 +83,8 @@ public class Renderer
         
         ResizeViewport(ViewportWidth, ViewportHeight);
         
+        _depthPass = new DepthPass(_window.graphicsDevice, _viewFramebuffer, _scenePass.CameraBuffer);
+        
         _viewportWindow = new ViewportWindow(this, _window);
         _editorManager.AddWindow(_viewportWindow);
     }
@@ -120,6 +123,10 @@ public class Renderer
             TextureUsage.DepthStencil));
             
         _viewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(_viewDepthTexture, _viewTexture));
+        
+        // Recreate DepthPass pipelines for new target if needed, but DepthPass currently doesn't support hot-swapping target easily.
+        // Actually, DepthPass target is _viewFramebuffer. In Veldrid, if the framebuffer is recreated, the pipeline is still compatible if OutputDescription is same.
+        // Swapchain format usually doesn't change on resize.
     }
     
     public IntPtr GetGameViewTextureId()
@@ -212,8 +219,14 @@ public class Renderer
             
             // Main Pass - Render to Game View Framebuffer
             _cl.SetFramebuffer(_viewFramebuffer);
-            _cl.ClearColorTarget(0, RgbaFloat.Black);
             _cl.ClearDepthStencil(1.0f);
+            
+            if (camera != null)
+            {
+                _depthPass.Render(_cl, _scenePass, camera);
+            }
+
+            _cl.ClearColorTarget(0, RgbaFloat.Black);
             
             foreach (var pass in _passes)
             {
@@ -323,6 +336,7 @@ public class Renderer
     public void Dispose()
     {
         _scenePass.Dispose();
+        _depthPass.Dispose();
         _shadowPass.Dispose();
         _shadowAtlas.Dispose();
         _immediateRenderer.Dispose();
