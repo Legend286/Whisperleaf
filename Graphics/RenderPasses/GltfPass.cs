@@ -116,9 +116,13 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     public void UpdateMaterial(string path, MaterialAsset asset)
     {
+        string fullPath = Path.GetFullPath(path);
         foreach (var mat in _materials)
         {
-            if (string.Equals(mat.AssetPath, path, StringComparison.OrdinalIgnoreCase))
+            // Normalize existing path
+            string? matPath = mat.AssetPath != null ? Path.GetFullPath(mat.AssetPath) : null;
+            
+            if (string.Equals(matPath, fullPath, StringComparison.OrdinalIgnoreCase))
             {
                 // Check if textures changed
                 bool texturesChanged = 

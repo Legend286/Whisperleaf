@@ -35,17 +35,17 @@ namespace Whisperleaf.AssetPipeline
         public string? RMAHash;
 
         // GPU resources
-        public Texture? BaseColorTex;
+        public RefCountedTexture? BaseColorRef;
         public TextureView? BaseColorView;
-        public Texture? MetallicTex;
+        public RefCountedTexture? MetallicRef;
         public TextureView? MetallicView;
-        public Texture? RoughnessTex;
+        public RefCountedTexture? RoughnessRef;
         public TextureView? RoughnessView;
-        public Texture? NormalTex;
+        public RefCountedTexture? NormalRef;
         public TextureView? NormalView;
-        public Texture? OcclusionTex;
+        public RefCountedTexture? OcclusionRef;
         public TextureView? OcclusionView;
-        public Texture? EmissiveTex;
+        public RefCountedTexture? EmissiveRef;
         public TextureView? EmissiveView;
 
         public DeviceBuffer? ParamsBuffer;
@@ -74,9 +74,9 @@ namespace Whisperleaf.AssetPipeline
             ParamsBuffer?.Dispose();
 
             // 4. Finally dispose Textures (VkImage).
-            var disposedTextures = new HashSet<Texture?>();
+            var disposedTextures = new HashSet<RefCountedTexture?>();
 
-            void DisposeTexture(Texture? tex)
+            void DisposeTexture(RefCountedTexture? tex)
             {
                 if (tex != null && disposedTextures.Add(tex))
                 {
@@ -84,12 +84,12 @@ namespace Whisperleaf.AssetPipeline
                 }
             }
 
-            DisposeTexture(BaseColorTex);
-            DisposeTexture(MetallicTex);
-            DisposeTexture(RoughnessTex);
-            DisposeTexture(NormalTex);
-            DisposeTexture(OcclusionTex);
-            DisposeTexture(EmissiveTex);
+            DisposeTexture(BaseColorRef);
+            DisposeTexture(MetallicRef);
+            DisposeTexture(RoughnessRef);
+            DisposeTexture(NormalRef);
+            DisposeTexture(OcclusionRef);
+            DisposeTexture(EmissiveRef);
         }
     }
 }

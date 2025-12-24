@@ -42,7 +42,6 @@ public class ThumbnailGenerator : IDisposable
     private ResourceSet _uniformSet;
     private ResourceLayout _materialLayout;
     private GeometryBuffer _geoBuffer;
-    private CommandList _cl;
     
     private Texture _whiteTex;
     private Texture _normalTex;
@@ -87,7 +86,6 @@ public class ThumbnailGenerator : IDisposable
             size, size, 1, 1, PixelFormat.R8_G8_B8_A8_UNorm, TextureUsage.Staging));
             
         _geoBuffer = new GeometryBuffer(_gd);
-        _cl = _factory.CreateCommandList();
         
         // Default Textures
         _whiteTex = CreateSolidTexture(new Rgba32(255,255,255,255));
@@ -199,9 +197,12 @@ public class ThumbnailGenerator : IDisposable
         List<Texture> tempTextures = new();
         ResourceSet matSet = null;
         var range = default(MeshRange);
+        CommandList cl = null;
         
         try
         {
+            cl = _factory.CreateCommandList();
+            
             var meshData = WlMeshFormat.Read(srcPath, out _);
             range = _geoBuffer.Allocate(meshData.Vertices, meshData.Indices);
             
@@ -250,25 +251,29 @@ public class ThumbnailGenerator : IDisposable
                 Metallic = metallic
             };
             
-            _cl.Begin();
-            _cl.UpdateBuffer(_uniformBuffer, 0, paramsData);
-            _cl.SetFramebuffer(_thumbFramebuffer);
-            _cl.ClearColorTarget(0, RgbaFloat.Clear);
-            _cl.ClearDepthStencil(1.0f);
+            cl.Begin();
+            cl.UpdateBuffer(_uniformBuffer, 0, paramsData);
+            cl.SetFramebuffer(_thumbFramebuffer);
+            cl.ClearColorTarget(0, RgbaFloat.Clear);
+            cl.ClearDepthStencil(1.0f);
             
-            _cl.SetPipeline(_pipeline);
-            _cl.SetGraphicsResourceSet(0, _uniformSet);
-            _cl.SetGraphicsResourceSet(1, matSet);
-            _cl.SetVertexBuffer(0, _geoBuffer.VertexBuffer);
-            _cl.SetIndexBuffer(_geoBuffer.IndexBuffer, IndexFormat.UInt32);
+            cl.SetPipeline(_pipeline);
+            cl.SetGraphicsResourceSet(0, _uniformSet);
+            cl.SetGraphicsResourceSet(1, matSet);
+            cl.SetVertexBuffer(0, _geoBuffer.VertexBuffer);
+            cl.SetIndexBuffer(_geoBuffer.IndexBuffer, IndexFormat.UInt32);
             
-            _cl.DrawIndexed(range.IndexCount, 1, range.IndexStart, range.VertexOffset, 0);
+            cl.DrawIndexed(range.IndexCount, 1, range.IndexStart, range.VertexOffset, 0);
             
-            _cl.CopyTexture(_thumbColor, _readbackTexture);
-            _cl.End();
+            cl.CopyTexture(_thumbColor, _readbackTexture);
+            cl.End();
             
-            _gd.SubmitCommands(_cl);
+            _gd.SubmitCommands(cl);
             _gd.WaitForIdle();
+            
+            // Dispose command list to release references to resources
+            cl.Dispose();
+            cl = null;
             
             var map = _gd.Map(_readbackTexture, MapMode.Read);
             
@@ -309,6 +314,7 @@ public class ThumbnailGenerator : IDisposable
         finally
         {
             if (range.IndexCount > 0) _geoBuffer.Free(range);
+            cl?.Dispose();
             if (matSet != null) matSet.Dispose();
             foreach(var t in tempTextures) t.Dispose();
         }
@@ -439,7 +445,6 @@ public class ThumbnailGenerator : IDisposable
         _pipeline?.Dispose();
         _uniformBuffer?.Dispose();
         _geoBuffer?.Dispose();
-        _cl?.Dispose();
         _whiteTex?.Dispose();
         _normalTex?.Dispose();
         _materialLayout?.Dispose();

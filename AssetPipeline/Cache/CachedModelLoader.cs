@@ -78,7 +78,6 @@ public static class CachedModelLoader
             (mat.EmissivePath, mat.EmissiveHash) = ProcessTexture(mat.EmissivePath, TextureType.Emissive, scene, sceneName, owningMeshName);
 
             (mat.MetallicPath, mat.RMAHash) = ProcessRMATexture(mat.RoughnessPath, mat.MetallicPath, mat.OcclusionPath, scene, sceneName, owningMeshName);
-            mat.RoughnessTex = null;
             mat.OcclusionPath = null;
             mat.UsePackedRMA = true;
 
