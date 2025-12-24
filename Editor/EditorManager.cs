@@ -83,7 +83,7 @@ public class EditorManager : IDisposable {
         _statsWindow = new StatsWindow();
         _importWizard = new ImportWizardWindow();
         _fileDialog = new FileDialogWindow();
-        _materialEditor = new MaterialEditorWindow();
+        _materialEditor = new MaterialEditorWindow(_thumbnailGenerator);
 
         _windows.Add(_assetBrowser);
         _windows.Add(_sceneOutliner);
@@ -99,6 +99,13 @@ public class EditorManager : IDisposable {
              _materialEditor.OpenMaterial(path);
              // Ensure window is visible (handled inside OpenMaterial, but maybe check menu state?)
         };
+        
+        _materialEditor.RevealRequested += path => {
+            _assetBrowser.NavigateTo(path);
+            // Ensure Asset Browser is open/focused?
+            _assetBrowser.IsOpen = true;
+        };
+        
         _importWizard.OnImportComplete += OnImportComplete;
         window.DragDrop += OnWindowDragDrop;
         

@@ -3,19 +3,24 @@ using ImGuiNET;
 using Whisperleaf.AssetPipeline;
 using Whisperleaf.Platform;
 
+using Whisperleaf.AssetPipeline.Cache;
+
 namespace Whisperleaf.Editor.Windows;
 
 public class MaterialEditorWindow : EditorWindow
 {
+    private readonly ThumbnailGenerator _thumbs;
     private MaterialAsset _currentMaterial;
     private string? _currentPath;
     private bool _dirty;
     
     public event Action<string, MaterialAsset>? MaterialChanged;
+    public event Action<string>? RevealRequested;
 
-    public MaterialEditorWindow()
+    public MaterialEditorWindow(ThumbnailGenerator thumbs)
     {
         Title = "Material Editor";
+        _thumbs = thumbs;
         IsOpen = false; // Closed by default
         _currentMaterial = new MaterialAsset();
     }
@@ -181,17 +186,37 @@ public class MaterialEditorWindow : EditorWindow
         ImGui.PushID(label);
         ImGui.Text(label);
         
-        string display = string.IsNullOrEmpty(path) ? "<None>" : Path.GetFileName(path);
-        ImGui.Button(display, new Vector2(ImGui.GetContentRegionAvail().X - 30, 0));
+        IntPtr texHandle = IntPtr.Zero;
+        if (!string.IsNullOrEmpty(path))
+        {
+            texHandle = _thumbs.GetThumbnail(path, AssetType.Texture);
+        }
+        
+        Vector2 size = new Vector2(64, 64);
+        bool clicked = false;
+        
+        ImGui.BeginGroup(); // Wrap in group for robust drag target
+        if (texHandle != IntPtr.Zero)
+        {
+            // Image Button
+            if (ImGui.ImageButton(label + "_btn", texHandle, size)) clicked = true;
+        }
+        else
+        {
+            // Placeholder Button
+            string btnText = string.IsNullOrEmpty(path) ? "None" : "Loading...";
+            if (ImGui.Button(btnText, size)) clicked = true;
+        }
+        ImGui.EndGroup();
 
+        // Drag Drop Target
         if (ImGui.BeginDragDropTarget())
         {
             unsafe {
-                var payload = ImGui.AcceptDragDropPayload("ASSET_PATH");
-                if (payload.NativePtr != null)
+                var payload = ImGui.AcceptDragDropPayload("TEXTURE_ASSET");
+                if (payload.NativePtr != null && payload.DataSize > 0)
                 {
-                    string droppedPath = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(payload.Data);
-                    // Validate extension
+                    string droppedPath = System.Text.Encoding.UTF8.GetString((byte*)payload.Data, payload.DataSize);
                     string ext = Path.GetExtension(droppedPath).ToLower();
                     if (ext == ".wltex" || ext == ".png" || ext == ".jpg" || ext == ".tga")
                     {
@@ -201,6 +226,18 @@ public class MaterialEditorWindow : EditorWindow
                 }
             }
             ImGui.EndDragDropTarget();
+        }
+        
+        // Double click to reveal
+        if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+        {
+            if (!string.IsNullOrEmpty(path)) RevealRequested?.Invoke(path);
+        }
+        
+        // Tooltip
+        if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(path))
+        {
+            ImGui.SetTooltip(Path.GetFileName(path));
         }
 
         ImGui.SameLine();
@@ -212,7 +249,7 @@ public class MaterialEditorWindow : EditorWindow
 
         if (!string.IsNullOrEmpty(path))
         {
-            ImGui.TextDisabled(path);
+            ImGui.TextDisabled(Path.GetFileName(path));
         }
 
         ImGui.PopID();

@@ -21,6 +21,23 @@ public class AssetBrowserWindow : EditorWindow
     public event Action<SceneAsset, bool>? OnSceneSelected; // Legacy support
     public event Action<string>? OnMaterialSelected;
 
+    public void NavigateTo(string assetPath)
+    {
+        string? dir = Path.GetDirectoryName(assetPath);
+        if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+        {
+            // Ensure we are inside cache root
+            string fullDir = Path.GetFullPath(dir);
+            string fullRoot = Path.GetFullPath(AssetCache.CacheRoot);
+            
+            if (fullDir.StartsWith(fullRoot))
+            {
+                _currentPath = fullDir;
+                Refresh();
+            }
+        }
+    }
+
     public AssetBrowserWindow(ThumbnailGenerator thumbs)
     {
         Title = "Asset Browser";
@@ -150,19 +167,15 @@ public class AssetBrowserWindow : EditorWindow
                 if (ImGui.BeginDragDropSource())
                 {
                     DragDropPayload.CurrentAssetPath = file;
-                    // Send path as C-string for other windows (Material Editor)
-                    IntPtr pStr = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi(file);
-                    try 
+                    unsafe
                     {
-                        ImGui.SetDragDropPayload("ASSET_PATH", pStr, (uint)file.Length + 1);
+                        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(file);
+                        fixed (byte* ptr = bytes)
+                        {
+                            string payloadId = isTex ? "TEXTURE_ASSET" : (isMesh ? "MODEL_ASSET" : "MATERIAL_ASSET");
+                            ImGui.SetDragDropPayload(payloadId, (IntPtr)ptr, (uint)bytes.Length);
+                        }
                     }
-                    finally 
-                    {
-                        System.Runtime.InteropServices.Marshal.FreeHGlobal(pStr);
-                    }
-                    
-                    // Also support legacy internal payload
-                    ImGui.SetDragDropPayload("ASSET_BROWSER_ITEM", IntPtr.Zero, 0);
                     
                     ImGui.Text(fileName);
                     ImGui.EndDragDropSource();

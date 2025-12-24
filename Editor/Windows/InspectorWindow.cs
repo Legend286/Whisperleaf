@@ -130,10 +130,10 @@ public class InspectorWindow : EditorWindow
                 if (ImGui.BeginDragDropTarget())
                 {
                     unsafe {
-                        var payload = ImGui.AcceptDragDropPayload("ASSET_PATH");
-                        if (payload.NativePtr != null)
+                        var payload = ImGui.AcceptDragDropPayload("MATERIAL_ASSET");
+                        if (payload.NativePtr != null && payload.DataSize > 0)
                         {
-                            string droppedPath = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(payload.Data);
+                            string droppedPath = System.Text.Encoding.UTF8.GetString((byte*)payload.Data, payload.DataSize);
                             if (droppedPath.EndsWith(".wlmat", StringComparison.OrdinalIgnoreCase))
                             {
                                 MaterialDropped?.Invoke(node, droppedPath);
