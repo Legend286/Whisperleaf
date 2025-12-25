@@ -32,8 +32,8 @@ public static class CachedModelLoader
         }
 
         // Process meshes (check cache or process)
-        var cachedMeshes = new List<MeshData>();
-        foreach (var mesh in sourceMeshes)
+        var cachedMeshes = new List<MeshData>(new MeshData[sourceMeshes.Count]);
+        Parallel.ForEach(sourceMeshes, (mesh, state, index) =>
         {
             // Center the mesh geometry to improve instancing efficiency
             // Two identical meshes at different locations will become identical after centering
@@ -50,7 +50,7 @@ public static class CachedModelLoader
                 cached.WorldMatrix = mesh.WorldMatrix;
                 cached.CenteringOffset = center; // Pass the offset to the importer
                 cached.MaterialIndex = mesh.MaterialIndex; // Restore original material index
-                cachedMeshes.Add(cached);
+                cachedMeshes[(int)index] = cached;
             }
             else
             {
@@ -62,13 +62,13 @@ public static class CachedModelLoader
                 }, sceneName, mesh.Name);
 
                 WlMeshFormat.Write(meshPath, mesh, meshHash);
-                cachedMeshes.Add(mesh);
+                cachedMeshes[(int)index] = mesh;
             }
-        }
+        });
 
         // Process materials (check cache or process)
-        var cachedMaterials = new List<MaterialData>();
-        for (int i = 0; i < sourceMaterials.Count; i++)
+        var cachedMaterials = new List<MaterialData>(new MaterialData[sourceMaterials.Count]);
+        Parallel.For(0, sourceMaterials.Count, i =>
         {
             var mat = sourceMaterials[i];
             string owningMeshName = materialToMeshMap.TryGetValue(i, out string? name) ? name : "unassigned_material";
@@ -132,8 +132,8 @@ public static class CachedModelLoader
                 Console.WriteLine($"[CachedModelLoader] Error saving .wlmat: {ex.Message}");
             }
 
-            cachedMaterials.Add(mat);
-        }
+            cachedMaterials[i] = mat;
+        });
 
         return (cachedMeshes, cachedMaterials, scene);
     }

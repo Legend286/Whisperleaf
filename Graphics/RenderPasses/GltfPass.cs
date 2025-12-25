@@ -656,14 +656,14 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         // Optimization: Keep a persistent array or update visible only (but compute cull needs all?)
         var uniforms = new ModelUniform[_meshInstances.Count];
         
-        for (int i = 0; i < _meshInstances.Count; i++) {
+        Parallel.For(0, _meshInstances.Count, i => {
             var inst = _meshInstances[i];
             if (_nodeWorldTransforms.TryGetValue(inst.Node, out var world)) {
                 uniforms[i] = new ModelUniform(world);
             } else {
                 uniforms[i] = new ModelUniform(Matrix4x4.Identity);
             }
-        }
+        });
         
         _modelBuffer.UpdateAll(uniforms);
     }

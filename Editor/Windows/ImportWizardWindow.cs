@@ -40,12 +40,30 @@ public class ImportWizardWindow : EditorWindow
         }
     }
 
+    private SceneAsset? _importedScene;
+    private string? _importError;
+
     protected override void OnDraw()
     {
         if (string.IsNullOrEmpty(_sourcePath))
         {
             ImGui.TextDisabled("No file selected");
             return;
+        }
+
+        // Check for import completion
+        if (_importedScene != null)
+        {
+            OnImportComplete?.Invoke(_importedScene);
+            _importedScene = null;
+            _importing = false;
+            IsOpen = false;
+        }
+        
+        if (_importError != null)
+        {
+            ImGui.TextColored(new System.Numerics.Vector4(1, 0, 0, 1), $"Error: {_importError}");
+            if (ImGui.Button("Close")) _importError = null;
         }
 
         ImGui.Text($"Source: {Path.GetFileName(_sourcePath)}");
@@ -88,7 +106,8 @@ public class ImportWizardWindow : EditorWindow
         // Import button
         if (_importing)
         {
-            ImGui.TextColored(new System.Numerics.Vector4(0, 1, 0, 1), "Importing...");
+            ImGui.TextColored(new System.Numerics.Vector4(0, 1, 0, 1), "Importing... Please wait.");
+            // Spinner or progress bar could go here
         }
         else
         {
@@ -112,30 +131,32 @@ public class ImportWizardWindow : EditorWindow
             return;
 
         _importing = true;
+        _importError = null;
 
-        try
+        string sourcePath = _sourcePath;
+        float scale = _scaleFactor;
+
+        Task.Run(() => 
         {
-            // Determine output path
-            var scenesDir = "Resources/Scenes";
-            Directory.CreateDirectory(scenesDir);
+            try
+            {
+                // Determine output path
+                var scenesDir = "Resources/Scenes";
+                Directory.CreateDirectory(scenesDir);
 
-            var fileName = Path.GetFileNameWithoutExtension(_sourcePath);
-            var outputPath = Path.Combine(scenesDir, $"{fileName}.wlscene");
+                var fileName = Path.GetFileNameWithoutExtension(sourcePath);
+                var outputPath = Path.Combine(scenesDir, $"{fileName}.wlscene");
 
-            // Import
-            var scene = SceneImporter.Import(_sourcePath, outputPath, _scaleFactor);
-
-            OnImportComplete?.Invoke(scene);
-
-            IsOpen = false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Import failed: {ex.Message}");
-        }
-        finally
-        {
-            _importing = false;
-        }
+                // Import
+                var scene = SceneImporter.Import(sourcePath, outputPath, scale);
+                _importedScene = scene;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Import failed: {ex.Message}");
+                _importError = ex.Message;
+                _importing = false;
+            }
+        });
     }
 }

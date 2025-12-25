@@ -13,6 +13,7 @@ using Whisperleaf.Graphics.Scene;
 using Whisperleaf.Graphics.Scene.Data;
 using Whisperleaf.Graphics.Shadows;
 using Whisperleaf.Input;
+using Whisperleaf.Physics;
 using Whisperleaf.Platform;
 
 namespace Whisperleaf.Graphics;
@@ -50,6 +51,8 @@ public class Renderer
     public bool IsManipulating => ImGuizmo.IsUsing();
 
     public Camera MainCamera => _viewportWindow.Camera;
+    
+    public PhysicsThread Physics { get; private set; }
 
     private SceneNode? _selectedNode;
     private OPERATION _gizmoOperation;
@@ -60,6 +63,9 @@ public class Renderer
         _window = window;
         _cl = _window.graphicsDevice.ResourceFactory.CreateCommandList();
         PbrLayout.Initialize(_window.graphicsDevice);
+        
+        Physics = new PhysicsThread();
+        
         _editorManager = new EditorManager(_window.graphicsDevice, _window.SdlWindow);
         _editorManager.SceneNodeSelected += OnSceneNodeSelected;
         _editorManager.GizmoOperationChanged += operation => _gizmoOperation = operation;
@@ -377,6 +383,7 @@ public class Renderer
 
     public void Dispose()
     {
+        Physics.Dispose();
         _scenePass.Dispose();
         _depthPass.Dispose();
         _shadowPass.Dispose();

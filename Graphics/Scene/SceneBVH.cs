@@ -27,6 +27,8 @@ public class SceneBVH
     // Temporary list for query results
     private readonly List<int> _queryResults = new(1024);
 
+    private Dictionary<int, (Vector3 Min, Vector3 Max)> _cachedBounds = new();
+
     public void Build(List<int> indices, Func<int, (Vector3 Min, Vector3 Max)> aabbProvider)
     {
         _nodeCount = 0;
@@ -44,13 +46,41 @@ public class SceneBVH
             _nodes = new Node[maxNodes];
         }
 
+        // Pre-calculate AABBs in parallel
+        _cachedBounds.Clear();
+        // Since we are adding to a dictionary in parallel, we need a concurrent dictionary or array
+        // Given indices are arbitrary ints, an array might be sparse if indices are large.
+        // However, indices come from GltfPass which are 0..N-1 usually (meshInstances then lights).
+        // Let's use a concurrent dictionary or just array if we know max index.
+        // The indices passed here are from 0 to TotalInstances+Lights.
+        // The caller (GltfPass) generates indices as 0..Count.
+        
+        // Let's assume indices are dense and small enough, or just use ConcurrentDictionary.
+        // Or better: create a local array of bounds corresponding to the 'workingIndices' array positions?
+        // No, the recursive build sorts indices, so we need a map from ID to Bounds.
+        
+        // Let's use a ConcurrentDictionary for safety and simplicity given the scope.
+        // Actually, we can just use a thread-safe array if we know the max index.
+        // But indices list might not be 0..N strictly if filtered?
+        // In GltfPass, indices are 0..Count. So max index is Count-1.
+        
+        int maxIndex = 0;
+        foreach(var i in indices) if (i > maxIndex) maxIndex = i;
+        
+        var boundsArray = new (Vector3 Min, Vector3 Max)[maxIndex + 1];
+        
+        Parallel.ForEach(indices, i =>
+        {
+            boundsArray[i] = aabbProvider(i);
+        });
+
         // Recursively build
         // We clone the indices list because we will sort it
         int[] workingIndices = indices.ToArray();
-        _rootIndex = BuildRecursive(workingIndices, 0, workingIndices.Length, aabbProvider, 0);
+        _rootIndex = BuildRecursive(workingIndices, 0, workingIndices.Length, boundsArray, 0);
     }
 
-    private int BuildRecursive(int[] indices, int start, int end, Func<int, (Vector3 Min, Vector3 Max)> aabbProvider, int depth)
+    private int BuildRecursive(int[] indices, int start, int end, (Vector3 Min, Vector3 Max)[] boundsCache, int depth)
     {
         int count = end - start;
         int nodeIndex = _nodeCount++;
@@ -64,7 +94,7 @@ public class SceneBVH
 
         for (int i = start; i < end; i++)
         {
-            var bounds = aabbProvider(indices[i]);
+            var bounds = boundsCache[indices[i]];
             min = Vector3.Min(min, bounds.Min);
             max = Vector3.Max(max, bounds.Max);
         }
@@ -89,13 +119,11 @@ public class SceneBVH
             if (extent.Z > extent.Y && extent.Z > extent.X) axis = 2;
 
             // Sort indices based on centroids along axis
-            // Note: Standard sort is slow for subarrays. We implement a quick partition or sort.
-            // Using Array.Sort with IComparer is easiest for now.
-            Array.Sort(indices, start, count, new AxisComparer(axis, aabbProvider));
+            Array.Sort(indices, start, count, new AxisComparer(axis, boundsCache));
 
             int mid = start + count / 2;
-            _nodes[nodeIndex].Left = BuildRecursive(indices, start, mid, aabbProvider, depth + 1);
-            _nodes[nodeIndex].Right = BuildRecursive(indices, mid, end, aabbProvider, depth + 1);
+            _nodes[nodeIndex].Left = BuildRecursive(indices, start, mid, boundsCache, depth + 1);
+            _nodes[nodeIndex].Right = BuildRecursive(indices, mid, end, boundsCache, depth + 1);
         }
 
         return nodeIndex;
@@ -229,18 +257,18 @@ public class SceneBVH
     private struct AxisComparer : IComparer<int>
     {
         private readonly int _axis;
-        private readonly Func<int, (Vector3 Min, Vector3 Max)> _provider;
+        private readonly (Vector3 Min, Vector3 Max)[] _boundsCache;
 
-        public AxisComparer(int axis, Func<int, (Vector3 Min, Vector3 Max)> provider)
+        public AxisComparer(int axis, (Vector3 Min, Vector3 Max)[] boundsCache)
         {
             _axis = axis;
-            _provider = provider;
+            _boundsCache = boundsCache;
         }
 
         public int Compare(int a, int b)
         {
-            var boundsA = _provider(a);
-            var boundsB = _provider(b);
+            var boundsA = _boundsCache[a];
+            var boundsB = _boundsCache[b];
             float cA = (boundsA.Min.Get(_axis) + boundsA.Max.Get(_axis)) * 0.5f;
             float cB = (boundsB.Min.Get(_axis) + boundsB.Max.Get(_axis)) * 0.5f;
             return cA.CompareTo(cB);
