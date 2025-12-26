@@ -140,6 +140,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             (mat.UsePackedRMA && !string.Equals(mat.MetallicPath, asset.RMATexture, StringComparison.OrdinalIgnoreCase)) ||
             (!mat.UsePackedRMA && !string.IsNullOrEmpty(asset.RMATexture));
 
+        bool alphaChanged = mat.AlphaMode != asset.AlphaMode;
+
         mat.Name = asset.Name;
         mat.BaseColorFactor = asset.BaseColorFactor;
         mat.EmissiveFactor = asset.EmissiveFactor;
@@ -147,6 +149,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         mat.RoughnessFactor = asset.RoughnessFactor;
         mat.AlphaMode = asset.AlphaMode;
         mat.AlphaCutoff = asset.AlphaCutoff;
+        
+        if (alphaChanged) _structureChanged = true;
         
         mat.BaseColorPath = asset.BaseColorTexture;
         mat.NormalPath = asset.NormalTexture;

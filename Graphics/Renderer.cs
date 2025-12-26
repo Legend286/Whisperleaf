@@ -93,7 +93,10 @@ public class Renderer
         _editorManager.SceneNodeSelected += OnSceneNodeSelected;
         _editorManager.GizmoOperationChanged += operation => _gizmoOperation = operation;
         _editorManager.ResolveMaterialPath = idx => _scenePass.GetMaterial(idx)?.AssetPath;
-        _editorManager.MaterialUpdated += (path, asset) => _scenePass.UpdateMaterial(path, asset);
+        _editorManager.MaterialUpdated += (path, asset, index) => {
+            if (path != null) _scenePass.UpdateMaterial(path, asset);
+            else if (index >= 0) _scenePass.UpdateMaterial(index, asset);
+        };
         _gizmoOperation = _editorManager.GizmoOperation;
 
         _editorManager.SceneRequested += OnSceneRequested;

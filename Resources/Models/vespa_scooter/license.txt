@@ -1,0 +1,8 @@
+Model Information:
+* title:	Vespa Scooter
+* source:	https://sketchfab.com/3d-models/vespa-scooter-a62c457490ca4f0fb29c4f15ac53fa36
+* author:	Marina Belov (https://sketchfab.com/marinabelova)
+
+Model License:
+* license type:	SKETCHFAB Standard (https://sketchfab.com/licenses)
+* requirements:	Under basic restrictions, use worldwide, on all types of media, commercially or not, and in all types of derivative works

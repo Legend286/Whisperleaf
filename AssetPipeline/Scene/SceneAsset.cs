@@ -171,6 +171,9 @@ public class MaterialReference
     public Vector3 EmissiveFactor { get; set; } = Vector3.Zero;
     public float MetallicFactor { get; set; } = 1.0f;
     public float RoughnessFactor { get; set; } = 1.0f;
+    
+    public AlphaMode AlphaMode { get; set; } = AlphaMode.Opaque;
+    public float AlphaCutoff { get; set; } = 0.5f;
 
     // Cached texture hashes (point to .wltex files in cache)
     public string? BaseColorHash { get; set; }

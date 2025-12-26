@@ -49,7 +49,7 @@ public class EditorManager : IDisposable {
     public event Action<OPERATION>? GizmoOperationChanged;
     
     public event Action? RequestRefresh;
-    public event Action<string, MaterialAsset>? MaterialUpdated;
+    public event Action<string?, MaterialAsset, int>? MaterialUpdated;
     public Func<int, string?>? ResolveMaterialPath;
 
     public OPERATION GizmoOperation { get; private set; } = OPERATION.TRANSLATE;
@@ -89,6 +89,7 @@ public class EditorManager : IDisposable {
         _fileDialog = new FileDialogWindow();
         _materialEditor = new MaterialEditorWindow(gd, renderer, _thumbnailGenerator);
         _materialEditor.SetBindingCallback(GetTextureBinding);
+        _materialEditor.MaterialChanged += (path, asset, index) => MaterialUpdated?.Invoke(path, asset, index);
 
         _windows.Add(_assetBrowser);
         _windows.Add(_sceneOutliner);
@@ -223,23 +224,97 @@ public class EditorManager : IDisposable {
             SceneRequested?.Invoke(_currentScene, false);
         };
         _inspector.MaterialDoubleClicked += index => {
-            if (ResolveMaterialPath != null)
+            if (_currentScene == null || index < 0 || index >= _currentScene.Materials.Count) return;
+            
+            var matRef = _currentScene.Materials[index];
+            if (!string.IsNullOrEmpty(matRef.AssetPath))
             {
-                var path = ResolveMaterialPath(index);
-                if (!string.IsNullOrEmpty(path))
-                {
-                    _materialEditor.OpenMaterial(path);
-                }
-                else
-                {
-                    Console.WriteLine($"[Editor] Cannot open material {index}: No asset path (embedded material). Re-import model to generate .wlmat assets.");
-                }
+                _materialEditor.OpenMaterial(matRef.AssetPath);
+            }
+            else
+            {
+                // Embedded material
+                var asset = MaterialReferenceToAsset(matRef);
+                _materialEditor.OpenMaterial(asset, index);
             }
         };
         
-        _materialEditor.MaterialChanged += (path, asset) => MaterialUpdated?.Invoke(path, asset);
+        _materialEditor.MaterialChanged += (path, asset, index) => {
+            if (_currentScene != null && index >= 0 && index < _currentScene.Materials.Count)
+            {
+                SyncMaterialAssetToReference(asset, _currentScene.Materials[index]);
+            }
+            MaterialUpdated?.Invoke(path, asset, index);
+        };
+
+        _materialEditor.MaterialSaved += (path, asset, index) => {
+            if (_currentScene != null && index >= 0 && index < _currentScene.Materials.Count)
+            {
+                var matRef = _currentScene.Materials[index];
+                matRef.AssetPath = path;
+                SyncMaterialAssetToReference(asset, matRef);
+                Console.WriteLine($"[Editor] Linked and synced material {index} to asset: {path}");
+            }
+            MaterialUpdated?.Invoke(path, asset, index);
+        };
         
         GizmoOperation = _inspector.CurrentOperation;
+    }
+
+    private void SyncMaterialAssetToReference(MaterialAsset asset, MaterialReference matRef)
+    {
+        matRef.Name = asset.Name;
+        matRef.BaseColorFactor = asset.BaseColorFactor;
+        matRef.EmissiveFactor = asset.EmissiveFactor;
+        matRef.MetallicFactor = asset.MetallicFactor;
+        matRef.RoughnessFactor = asset.RoughnessFactor;
+        matRef.AlphaMode = asset.AlphaMode;
+        matRef.AlphaCutoff = asset.AlphaCutoff;
+
+        // Try to sync hashes if paths match known cached assets
+        matRef.BaseColorHash = PathToHash(asset.BaseColorTexture);
+        matRef.NormalHash = PathToHash(asset.NormalTexture);
+        matRef.RMAHash = PathToHash(asset.RMATexture);
+        matRef.EmissiveHash = PathToHash(asset.EmissiveTexture);
+    }
+
+    private string? PathToHash(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        
+        // If it's a .wltex, we can read the hash from it or look it up in registry
+        // AssetCache doesn't have HashToPath in reverse easily without iterating, but we can peek the file.
+        if (path.EndsWith(".wltex", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+        {
+            try {
+                using var fs = File.OpenRead(path);
+                using var br = new BinaryReader(fs);
+                fs.Seek(32, SeekOrigin.Begin); // Skip header
+                return Convert.ToHexString(br.ReadBytes(32)).ToLowerInvariant();
+            } catch { return null; }
+        }
+        return null;
+    }
+
+    private MaterialAsset MaterialReferenceToAsset(MaterialReference matRef)
+    {
+        var asset = new MaterialAsset
+        {
+            Name = matRef.Name,
+            BaseColorFactor = matRef.BaseColorFactor,
+            EmissiveFactor = matRef.EmissiveFactor,
+            MetallicFactor = matRef.MetallicFactor,
+            RoughnessFactor = matRef.RoughnessFactor,
+            AlphaMode = matRef.AlphaMode,
+            AlphaCutoff = matRef.AlphaCutoff
+        };
+
+        if (AssetCache.HasTexture(matRef.BaseColorHash ?? "", out var bPath)) asset.BaseColorTexture = bPath;
+        if (AssetCache.HasTexture(matRef.NormalHash ?? "", out var nPath)) asset.NormalTexture = nPath;
+        if (AssetCache.HasTexture(matRef.RMAHash ?? "", out var rPath)) asset.RMATexture = rPath;
+        if (AssetCache.HasTexture(matRef.EmissiveHash ?? "", out var ePath)) asset.EmissiveTexture = ePath;
+
+        return asset;
     }
 
     public void SetScene(SceneAsset scene)
@@ -425,6 +500,7 @@ public class EditorManager : IDisposable {
                  matRef.RoughnessFactor = originalMat.RoughnessFactor;
                  matRef.MetallicFactor = originalMat.MetallicFactor;
                  matRef.EmissiveFactor = originalMat.EmissiveFactor;
+                 matRef.AssetPath = originalMat.AssetPath;
              }
              else
              {

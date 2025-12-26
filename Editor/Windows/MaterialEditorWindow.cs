@@ -29,12 +29,14 @@ public class MaterialEditorWindow : EditorWindow, IDisposable
 
     private MaterialAsset _currentMaterial;
     private string? _currentPath;
+    private int _sceneMaterialIndex = -1;
     private bool _dirty;
     
     private bool _showSaveAs;
     private string _saveAsName = "NewMaterial";
     
-    public event Action<string, MaterialAsset>? MaterialChanged;
+    public event Action<string?, MaterialAsset, int>? MaterialChanged;
+    public event Action<string, MaterialAsset, int>? MaterialSaved;
     public event Action<string>? RevealRequested;
     
     public MaterialPreviewRenderer PreviewRenderer => _previewRenderer;
@@ -89,6 +91,7 @@ public class MaterialEditorWindow : EditorWindow, IDisposable
             Console.WriteLine($"[MaterialEditor] Opening material: {path}");
             _currentMaterial = MaterialAsset.Load(path);
             _currentPath = path;
+            _sceneMaterialIndex = -1; // Unknown
             _dirty = false;
             IsOpen = true;
             _previewRenderer.UpdateMaterial(_currentMaterial);
@@ -97,6 +100,16 @@ public class MaterialEditorWindow : EditorWindow, IDisposable
         {
             Console.WriteLine($"[MaterialEditor] Failed to load material: {ex.Message}");
         }
+    }
+
+    public void OpenMaterial(MaterialAsset asset, int sceneIndex, string? path = null)
+    {
+        _currentMaterial = asset;
+        _currentPath = path;
+        _sceneMaterialIndex = sceneIndex;
+        _dirty = false;
+        IsOpen = true;
+        _previewRenderer.UpdateMaterial(_currentMaterial);
     }
 
     private void NewMaterial()
@@ -119,6 +132,7 @@ public class MaterialEditorWindow : EditorWindow, IDisposable
 
         _currentMaterial.Save(_currentPath);
         _dirty = false;
+        MaterialSaved?.Invoke(_currentPath, _currentMaterial, _sceneMaterialIndex);
         Console.WriteLine($"[MaterialEditor] Saved to {_currentPath}");
     }
 
@@ -135,6 +149,7 @@ public class MaterialEditorWindow : EditorWindow, IDisposable
         _currentMaterial.Save(path);
         _currentPath = path;
         _dirty = false;
+        MaterialSaved?.Invoke(path, _currentMaterial, _sceneMaterialIndex);
         Console.WriteLine($"[MaterialEditor] Saved to {path}");
     }
 
@@ -196,16 +211,19 @@ public class MaterialEditorWindow : EditorWindow, IDisposable
         // Dirty indicator
         if (_dirty) ImGui.TextColored(new Vector4(1, 1, 0, 1), "* Unsaved Changes");
         
+        string name = _currentMaterial.Name;
         if (ImGui.Button("Save"))
         {
             if (_currentPath != null)
+            {
+                _currentMaterial.Name = name; // Update internal name from UI before saving
                 SaveMaterial();
+            }
             else
                 Console.WriteLine("[MaterialEditor] No file path set. Use 'File > Save As'.");
         }
         ImGui.SameLine();
 
-        string name = _currentMaterial.Name;
         if (ImGui.InputText("Name", ref name, 64))
         {
             _currentMaterial.Name = name;
@@ -283,8 +301,7 @@ public class MaterialEditorWindow : EditorWindow, IDisposable
         {
             _dirty = true;
             _previewRenderer.UpdateMaterial(_currentMaterial); // Live update
-            if (_currentPath != null)
-                MaterialChanged?.Invoke(_currentPath, _currentMaterial);
+            MaterialChanged?.Invoke(_currentPath, _currentMaterial, _sceneMaterialIndex);
         }
     }
     
