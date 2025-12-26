@@ -937,7 +937,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
     }
 
-    public void UpdateModelBuffer(CommandList cl) {
+    public void UpdateModelBuffer() {
         if (_meshInstances.Count == 0) return;
         
         var uniforms = new ModelUniform[_meshInstances.Count];
@@ -951,10 +951,10 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             }
         }
         
-        _modelBuffer.UpdateAll(cl, uniforms);
+        _modelBuffer.UpdateAll(uniforms);
     }
 
-    public void PrepareRender(GraphicsDevice gd, CommandList cl, Camera? camera, Vector2 screenSize, int debugMode)
+    public void PrepareResources(GraphicsDevice gd, Camera? camera, Vector2 screenSize, int debugMode)
     {
         if (camera == null) return;
         
@@ -964,7 +964,10 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         
         CollectLights();
         _lightBuffer.UpdateGPU();
-        
+    }
+
+    public void RecordCulling(CommandList cl)
+    {
         CullLights(cl);
     }
 

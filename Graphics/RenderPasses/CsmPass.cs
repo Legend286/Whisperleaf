@@ -24,17 +24,18 @@ public class CsmPass : IDisposable
 
     private readonly DeviceBuffer _viewProjsBuffer; // StructuredBuffer of mat4
     private readonly DeviceBuffer _cullParamsBuffer; // Uniform
-    private readonly DeviceBuffer _drawCameraBuffer; // Uniform for Graphics
+    private readonly DeviceBuffer[] _drawCameraBuffers; // Uniform for Graphics
     
     private DeviceBuffer? _batchBuffer;
     private DeviceBuffer? _instanceBatchMapBuffer;
     private DeviceBuffer? _indirectCommandsBuffer;
     private DeviceBuffer? _indirectCommandsStorageBuffer;
+    private DeviceBuffer? _templateCommandsBuffer;
     private DeviceBuffer? _visibleInstancesBuffer;
 
     private ResourceSet? _viewProjsResourceSet;
     private ResourceSet? _cullParamsResourceSet;
-    private ResourceSet? _drawCameraResourceSet;
+    private ResourceSet[] _drawCameraResourceSets;
     private ResourceSet? _cullResourceSet;
     private ResourceSet? _commandsResourceSet;
     private ResourceSet? _visibleResourceSet;
@@ -89,14 +90,19 @@ public class CsmPass : IDisposable
             new ResourceLayoutElementDescription("VisibleInstances", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute | ShaderStages.Vertex)));
 
         // 2. Buffers
-        _viewProjsBuffer = _factory.CreateBuffer(new BufferDescription(64 * CsmAtlas.CascadeCount, BufferUsage.StructuredBufferReadOnly, 64));
+        _viewProjsBuffer = _factory.CreateBuffer(new BufferDescription(64 * CsmAtlas.CascadeCount, BufferUsage.StructuredBufferReadOnly | BufferUsage.Dynamic, 64));
         _viewProjsResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(_viewProjsLayout, _viewProjsBuffer));
 
-        _cullParamsBuffer = _factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer));
+        _cullParamsBuffer = _factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
         _cullParamsResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(_cullParamsLayout, _cullParamsBuffer));
 
-        _drawCameraBuffer = _factory.CreateBuffer(new BufferDescription(256, BufferUsage.UniformBuffer));
-        _drawCameraResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(_vpLayout, _drawCameraBuffer));
+        _drawCameraBuffers = new DeviceBuffer[CsmAtlas.CascadeCount];
+        _drawCameraResourceSets = new ResourceSet[CsmAtlas.CascadeCount];
+        for (int i = 0; i < CsmAtlas.CascadeCount; i++)
+        {
+            _drawCameraBuffers[i] = _factory.CreateBuffer(new BufferDescription(256, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+            _drawCameraResourceSets[i] = _factory.CreateResourceSet(new ResourceSetDescription(_vpLayout, _drawCameraBuffers[i]));
+        }
 
         // 3. Shaders
         var cullShader = ShaderCache.GetShader(_gd, ShaderStages.Compute, "Graphics/Shaders/CullShadow.comp");
@@ -191,16 +197,17 @@ public class CsmPass : IDisposable
             }
         }
 
-        RecreateBuffers();
+        RecreateBuffers(scene);
     }
 
-    private void RecreateBuffers()
+    private void RecreateBuffers(GltfPass scene)
     {
         _gd.WaitForIdle();
         _batchBuffer?.Dispose();
         _instanceBatchMapBuffer?.Dispose();
         _indirectCommandsBuffer?.Dispose();
         _indirectCommandsStorageBuffer?.Dispose();
+        _templateCommandsBuffer?.Dispose();
         _visibleInstancesBuffer?.Dispose();
         _cullResourceSet?.Dispose();
         _commandsResourceSet?.Dispose();
@@ -220,40 +227,15 @@ public class CsmPass : IDisposable
             4));
         _gd.UpdateBuffer(_instanceBatchMapBuffer, 0, _instanceBatchMap.ToArray());
 
+        uint cmdSize = (uint)(_opaqueBatches.Count * 20 * CsmAtlas.CascadeCount);
+
         _indirectCommandsStorageBuffer = _factory.CreateBuffer(new BufferDescription(
-            (uint)(_opaqueBatches.Count * 20 * CsmAtlas.CascadeCount), 
+            cmdSize, 
             BufferUsage.StructuredBufferReadWrite, 20));
 
-        _indirectCommandsBuffer = _factory.CreateBuffer(new BufferDescription(
-            (uint)(_opaqueBatches.Count * 20 * CsmAtlas.CascadeCount), 
-            BufferUsage.IndirectBuffer, 0));
-
-        _visibleInstancesBuffer = _factory.CreateBuffer(new BufferDescription(
-            (uint)(_totalOpaqueInstances * 4 * CsmAtlas.CascadeCount), 
-            BufferUsage.StructuredBufferReadWrite, 4));
-
-        _cullResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
-            _batchLayout, _batchBuffer, _instanceBatchMapBuffer));
-
-        _commandsResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
-            _commandsLayout, _indirectCommandsStorageBuffer));
-
-        _visibleResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
-            _visibleInstancesLayout, _visibleInstancesBuffer));
-    }
-
-    public void Render(CommandList cl, CsmAtlas atlas, GltfPass scene)
-    {
-        if (scene.MeshInstances.Count == 0) return;
-
-        RefreshSceneBatches(scene);
-
-        if (_totalOpaqueInstances == 0 && _alphaInstances.Count == 0) return;
-
-        // --- PHASE 1: UNIFIED COMPUTE CULLING ---
-        var matrices = new Matrix4x4[CsmAtlas.CascadeCount];
-        for (int i = 0; i < CsmAtlas.CascadeCount; i++) matrices[i] = atlas.GetViewProj(i);
-        cl.UpdateBuffer(_viewProjsBuffer, 0, matrices);
+        _templateCommandsBuffer = _factory.CreateBuffer(new BufferDescription(
+            cmdSize,
+            BufferUsage.StructuredBufferReadOnly, 20));
 
         var initialCommands = new IndirectDrawIndexedArguments[_opaqueBatches.Count * CsmAtlas.CascadeCount];
         for (int f = 0; f < CsmAtlas.CascadeCount; f++)
@@ -271,14 +253,75 @@ public class CsmPass : IDisposable
                 };
             }
         }
-        cl.UpdateBuffer(_indirectCommandsStorageBuffer, 0, initialCommands);
+        _gd.UpdateBuffer(_templateCommandsBuffer, 0, initialCommands);
 
+        _indirectCommandsBuffer = _factory.CreateBuffer(new BufferDescription(
+            cmdSize, 
+            BufferUsage.IndirectBuffer, 0));
+
+        _visibleInstancesBuffer = _factory.CreateBuffer(new BufferDescription(
+            (uint)(_totalOpaqueInstances * 4 * CsmAtlas.CascadeCount), 
+            BufferUsage.StructuredBufferReadWrite, 4));
+
+        _cullResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
+            _batchLayout, _batchBuffer, _instanceBatchMapBuffer));
+
+        _commandsResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
+            _commandsLayout, _indirectCommandsStorageBuffer));
+
+        _visibleResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
+            _visibleInstancesLayout, _visibleInstancesBuffer));
+    }
+
+    public void PrepareRender(CsmAtlas atlas, GltfPass scene)
+    {
+        if (scene.MeshInstances.Count == 0) return;
+
+        RefreshSceneBatches(scene);
+
+        if (_totalOpaqueInstances == 0 && _alphaInstances.Count == 0) return;
+
+        // 1. Update View/Proj matrices for Compute
+        var matrices = new Matrix4x4[CsmAtlas.CascadeCount];
+        for (int i = 0; i < CsmAtlas.CascadeCount; i++) matrices[i] = atlas.GetViewProj(i);
+        _gd.UpdateBuffer(_viewProjsBuffer, 0, matrices);
+
+        // 2. Initial Indirect Commands (reset count) - REMOVED, using CopyBuffer in Render
+        // _gd.UpdateBuffer(_indirectCommandsStorageBuffer, 0, initialCommands);
+
+        // 3. Cull Params
         var paramsData = new CullParams {
             TotalInstances = (uint)_totalOpaqueInstances,
             NumBatches = (uint)_opaqueBatches.Count
         };
-        cl.UpdateBuffer(_cullParamsBuffer, 0, ref paramsData);
+        _gd.UpdateBuffer(_cullParamsBuffer, 0, ref paramsData);
 
+        // 4. Per-cascade Camera Uniforms for Graphics
+        for (int i = 0; i < CsmAtlas.CascadeCount; i++)
+        {
+            var camData = new CameraUniform {
+                View = Matrix4x4.Identity,
+                Proj = Matrix4x4.Identity,
+                ViewProjection = atlas.GetViewProj(i),
+                CameraPos = Vector3.Zero
+            };
+            _gd.UpdateBuffer(_drawCameraBuffers[i], 0, ref camData);
+        }
+    }
+
+    public void Render(CommandList cl, CsmAtlas atlas, GltfPass scene)
+    {
+        if (scene.MeshInstances.Count == 0) return;
+
+        if (_totalOpaqueInstances == 0 && _alphaInstances.Count == 0) return;
+
+        // Reset Indirect Commands Buffer from Template (GPU Copy)
+        if (_templateCommandsBuffer != null && _indirectCommandsStorageBuffer != null)
+        {
+            cl.CopyBuffer(_templateCommandsBuffer, 0, _indirectCommandsStorageBuffer, 0, _templateCommandsBuffer.SizeInBytes);
+        }
+
+        // --- PHASE 1: UNIFIED COMPUTE CULLING ---
         cl.SetPipeline(_cullPipeline);
         cl.SetComputeResourceSet(0, _viewProjsResourceSet);
         cl.SetComputeResourceSet(1, scene.ModelBuffer.ResourceSet);
@@ -304,19 +347,11 @@ public class CsmPass : IDisposable
         cl.SetFramebuffer(fb);
         cl.ClearDepthStencil(1.0f); // CSM needs per-cascade clear
 
-        var camData = new CameraUniform {
-            View = Matrix4x4.Identity,
-            Proj = Matrix4x4.Identity,
-            ViewProjection = atlas.GetViewProj(cascadeIdx),
-            CameraPos = Vector3.Zero
-        };
-        cl.UpdateBuffer(_drawCameraBuffer, 0, ref camData);
-
         // 1. Opaque Path (MDI)
         if (_totalOpaqueInstances > 0 && _indirectCommandsBuffer != null)
         {
             cl.SetPipeline(_mdiPipeline);
-            cl.SetGraphicsResourceSet(0, _drawCameraResourceSet);
+            cl.SetGraphicsResourceSet(0, _drawCameraResourceSets[cascadeIdx]);
             cl.SetGraphicsResourceSet(1, scene.ModelBuffer.ResourceSet);
             cl.SetGraphicsResourceSet(2, _visibleResourceSet);
 
@@ -331,7 +366,7 @@ public class CsmPass : IDisposable
         if (_alphaInstances.Count > 0)
         {
             cl.SetPipeline(_alphaPipeline);
-            cl.SetGraphicsResourceSet(0, _drawCameraResourceSet);
+            cl.SetGraphicsResourceSet(0, _drawCameraResourceSets[cascadeIdx]);
             cl.SetGraphicsResourceSet(1, scene.ModelBuffer.ResourceSet);
             cl.SetVertexBuffer(0, scene.GeometryBuffer.VertexBuffer);
             cl.SetIndexBuffer(scene.GeometryBuffer.IndexBuffer, IndexFormat.UInt32);
@@ -363,12 +398,21 @@ public class CsmPass : IDisposable
         _viewProjsResourceSet?.Dispose();
         _cullParamsBuffer?.Dispose();
         _cullParamsResourceSet?.Dispose();
-        _drawCameraBuffer?.Dispose();
-        _drawCameraResourceSet?.Dispose();
+        
+        if (_drawCameraBuffers != null)
+        {
+            foreach (var b in _drawCameraBuffers) b?.Dispose();
+        }
+        if (_drawCameraResourceSets != null)
+        {
+            foreach (var s in _drawCameraResourceSets) s?.Dispose();
+        }
+
         _batchBuffer?.Dispose();
         _instanceBatchMapBuffer?.Dispose();
         _indirectCommandsBuffer?.Dispose();
         _indirectCommandsStorageBuffer?.Dispose();
+        _templateCommandsBuffer?.Dispose();
         _visibleInstancesBuffer?.Dispose();
         _cullResourceSet?.Dispose();
         _commandsResourceSet?.Dispose();

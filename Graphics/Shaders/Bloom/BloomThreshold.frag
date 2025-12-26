@@ -12,7 +12,8 @@ layout(set = 1, binding = 0) uniform ThresholdParams {
 };
 
 void main() {
-    vec3 color = texture(sampler2D(InputTex, MainSampler), v_ScreenUV).rgb;
+    vec2 uv = vec2(v_ScreenUV.x, 1.0 - v_ScreenUV.y);
+    vec3 color = texture(sampler2D(InputTex, MainSampler), uv).rgb;
     
     // Soft knee thresholding
     float brightness = max(color.r, max(color.g, color.b));

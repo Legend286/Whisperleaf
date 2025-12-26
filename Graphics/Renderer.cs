@@ -276,9 +276,16 @@ public class Renderer
                     CsmAtlas.UpdateCascades(camera, sunDir);
                     _csmUniformBuffer.Update(_window.graphicsDevice, CsmAtlas);
                     _skyboxPass.UpdateSun(-sunDir); 
+                    _csmPass.PrepareRender(CsmAtlas, _scenePass);
                 }
                 _sunActiveThisFrame = sunFound;
             }
+
+            // Update Transforms (GD Update - before CL)
+            _scenePass.UpdateModelBuffer();
+
+            // Prepare Resources (GD Update - before CL)
+            _scenePass.PrepareResources(_window.graphicsDevice, camera, screenSize, debugMode);
 
             // Parallel Render Passes (Shadows, CSM, Depth) - RECORDING
             // Combine all commands into one list
@@ -286,9 +293,6 @@ public class Renderer
 
             // 0. Render Material Preview (integrated into main CL)
             _editorManager.RenderPreview(_cl);
-
-            // Update Transforms for all passes (Shadows/Main)
-            _scenePass.UpdateModelBuffer(_cl);
 
             if (camera != null)
             {
@@ -314,8 +318,8 @@ public class Renderer
                     _depthPass.Render(_cl, _scenePass, camera);
                 }
 
-                // 4. Prepare work (Light culling uses cl)
-                _scenePass.PrepareRender(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
+                // 4. Record Light Culling (Compute)
+                _scenePass.RecordCulling(_cl);
 
                 // 5. Main Pass
                 _cl.SetFramebuffer(_viewFramebuffer);
@@ -396,6 +400,7 @@ public class Renderer
 
         ImGuizmo.SetOrthographic(false);
         ImGuizmo.SetDrawlist();
+        ImGuizmo.SetGizmoSizeClipSpace(0.05f);
         ImGuizmo.SetRect(_viewportWindow.Position.X, _viewportWindow.Position.Y, _viewportWindow.Size.X, _viewportWindow.Size.Y);
 
         if (_editorManager.SnapEnabled)

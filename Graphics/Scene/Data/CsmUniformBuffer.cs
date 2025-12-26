@@ -17,7 +17,7 @@ public class CsmUniformBuffer : IDisposable
 
         _buffer = factory.CreateBuffer(new BufferDescription(
             (uint)Marshal.SizeOf<CsmUniform>(),
-            BufferUsage.UniformBuffer));
+            BufferUsage.UniformBuffer | BufferUsage.Dynamic));
 
         _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
             new ResourceLayoutElementDescription("CsmMap", ResourceKind.TextureReadOnly, ShaderStages.Fragment),

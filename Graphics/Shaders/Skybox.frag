@@ -171,10 +171,6 @@ void main() {
         float edge = smoothstep(sunCosThreshold, sunCosThreshold + 0.0002, mu);
         color += sunExtinction * 1000.0 * edge; 
     }
-
-    // Tone Mapping (Reinhard)
-    color = color / (color + vec3(1.0));
-    color = pow(color, vec3(1.0/2.2)); // Gamma
     
     OutputColor = vec4(color, 1.0);
 }

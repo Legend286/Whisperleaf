@@ -23,5 +23,5 @@ void main()
     // gl_InstanceIndex includes the 'firstInstance' offset from the indirect command
     uint modelIndex = u_VisibleIndices[gl_InstanceIndex];
     mat4 model = u_Models[modelIndex];
-    gl_Position = u_ViewProj * model * vec4(v_Position, 1.0);
+    gl_Position = u_ViewProj * (model * vec4(v_Position, 1.0));
 }

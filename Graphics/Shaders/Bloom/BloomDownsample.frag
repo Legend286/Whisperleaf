@@ -11,50 +11,49 @@ layout(set = 0, binding = 2) uniform DownsampleParams {
 };
 
 void main() {
+    vec2 uv = vec2(v_ScreenUV.x, 1.0 - v_ScreenUV.y);
     vec2 texel = TexelSize;
     float x = texel.x;
     float y = texel.y;
 
     // 13-tap filter
-    vec3 a = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2(-2*x, 2*y)).rgb;
-    vec3 b = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2( 0,   2*y)).rgb;
-    vec3 c = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2( 2*x, 2*y)).rgb;
+    vec3 a = texture(sampler2D(InputTex, MainSampler), uv + vec2(-2*x, 2*y)).rgb;
+    vec3 b = texture(sampler2D(InputTex, MainSampler), uv + vec2( 0,   2*y)).rgb;
+    vec3 c = texture(sampler2D(InputTex, MainSampler), uv + vec2( 2*x, 2*y)).rgb;
 
-    vec3 d = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2(-2*x, 0)).rgb;
-    vec3 e = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2( 0,   0)).rgb;
-    vec3 f = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2( 2*x, 0)).rgb;
+    vec3 d = texture(sampler2D(InputTex, MainSampler), uv + vec2(-2*x, 0)).rgb;
+    vec3 e = texture(sampler2D(InputTex, MainSampler), uv + vec2( 0,   0)).rgb;
+    vec3 f = texture(sampler2D(InputTex, MainSampler), uv + vec2( 2*x, 0)).rgb;
 
-    vec3 g = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2(-2*x, -2*y)).rgb;
-    vec3 h = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2( 0,   -2*y)).rgb;
-    vec3 i = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2( 2*x, -2*y)).rgb;
+    vec3 g = texture(sampler2D(InputTex, MainSampler), uv + vec2(-2*x, -2*y)).rgb;
+    vec3 h = texture(sampler2D(InputTex, MainSampler), uv + vec2( 0,   -2*y)).rgb;
+    vec3 i = texture(sampler2D(InputTex, MainSampler), uv + vec2( 2*x, -2*y)).rgb;
 
-    vec3 j = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2(-x, y)).rgb;
-    vec3 k = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2( x, y)).rgb;
-    vec3 l = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2(-x, -y)).rgb;
-    vec3 m = texture(sampler2D(InputTex, MainSampler), v_ScreenUV + vec2( x, -y)).rgb;
+    vec3 j = texture(sampler2D(InputTex, MainSampler), uv + vec2(-x, y)).rgb;
+    vec3 k = texture(sampler2D(InputTex, MainSampler), uv + vec2( x, y)).rgb;
+    vec3 l = texture(sampler2D(InputTex, MainSampler), uv + vec2(-x, -y)).rgb;
+    vec3 m = texture(sampler2D(InputTex, MainSampler), uv + vec2( x, -y)).rgb;
 
-    // Karis Average to reduce fireflies/blockiness on high-intensity sources
-    float w0 = 1.0 / (1.0 + max(e.r, max(e.g, e.b)));
-    float w1 = 1.0 / (1.0 + max(a.r, max(a.g, a.b)));
-    float w2 = 1.0 / (1.0 + max(b.r, max(b.g, b.b)));
-    float w3 = 1.0 / (1.0 + max(c.r, max(c.g, c.b)));
-    float w4 = 1.0 / (1.0 + max(d.r, max(d.g, d.b)));
-    float w5 = 1.0 / (1.0 + max(f.r, max(f.g, f.b)));
-    float w6 = 1.0 / (1.0 + max(g.r, max(g.g, g.b)));
-    float w7 = 1.0 / (1.0 + max(h.r, max(h.g, h.b)));
-    float w8 = 1.0 / (1.0 + max(i.r, max(i.g, i.b)));
-    float w9 = 1.0 / (1.0 + max(j.r, max(j.g, j.b)));
-    float w10 = 1.0 / (1.0 + max(k.r, max(k.g, k.b)));
-    float w11 = 1.0 / (1.0 + max(l.r, max(l.g, l.b)));
-    float w12 = 1.0 / (1.0 + max(m.r, max(m.g, m.b)));
-
-    vec3 color = e*0.125*w0;
-    color += (a*w1 + c*w3 + g*w6 + i*w8)*0.03125;
-    color += (b*w2 + d*w4 + f*w5 + h*w7)*0.0625;
-    color += (j*w9 + k*w10 + l*w11 + m*w12)*0.125;
+    // Jimenez's 13-tap filter weights
+    // Use Karis Average only on the first downsample to reduce fireflies/blockiness
+    // We can detect the first pass if the input is close to full resolution, 
+    // or just pass a flag. For now, let's always use Karis but with a more stable formulation.
     
-    float totalWeight = 0.125*w0 + 0.03125*(w1+w3+w6+w8) + 0.0625*(w2+w4+w5+w7) + 0.125*(w9+w10+w11+w12);
-    color /= totalWeight;
+    // Divide into 4 groups of 4 taps to apply Karis Average
+    vec3 group0 = (a + b + d + e) * 0.25;
+    vec3 group1 = (b + c + e + f) * 0.25;
+    vec3 group2 = (d + e + g + h) * 0.25;
+    vec3 group3 = (e + f + h + i) * 0.25;
+    vec3 group4 = (j + k + l + m) * 0.25;
+
+    float w0 = 1.0 / (1.0 + max(group0.r, max(group0.g, group0.b)));
+    float w1 = 1.0 / (1.0 + max(group1.r, max(group1.g, group1.b)));
+    float w2 = 1.0 / (1.0 + max(group2.r, max(group2.g, group2.b)));
+    float w3 = 1.0 / (1.0 + max(group3.r, max(group3.g, group3.b)));
+    float w4 = 1.0 / (1.0 + max(group4.r, max(group4.g, group4.b)));
+
+    vec3 color = group0 * w0 + group1 * w1 + group2 * w2 + group3 * w3 + group4 * w4;
+    color /= (w0 + w1 + w2 + w3 + w4);
 
     out_Color = vec4(color, 1.0);
 }

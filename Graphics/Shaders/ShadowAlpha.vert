@@ -19,8 +19,7 @@ layout(set = 1, binding = 0) readonly buffer ModelBuffer {
 
 void main()
 {
-    // For direct path, gl_InstanceIndex is absolute index in ModelBuffer
     mat4 model = u_Models[gl_InstanceIndex];
-    f_UV = v_TexCoord * vec2(1, -1); // V-flip matches PBR
-    gl_Position = u_ViewProj * model * vec4(v_Position, 1.0);
+    f_UV = v_TexCoord * vec2(1, -1);
+    gl_Position = u_ViewProj * (model * vec4(v_Position, 1.0));
 }

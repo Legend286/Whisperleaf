@@ -82,39 +82,17 @@ namespace Whisperleaf.Graphics.Scene.Data
             _lastUploaded = transform;
         }
 
-        public void UpdateAll(CommandList cl, ReadOnlySpan<ModelUniform> uniforms)
+        public void UpdateAll(ReadOnlySpan<ModelUniform> uniforms)
         {
             _transforms.Clear();
             if (uniforms.Length == 0) return;
 
             EnsureCapacity(uniforms.Length);
             
-            // Note: CommandList.UpdateBuffer typically copies data. 
-            // If we use it repeatedly, we are copying data into the command stream.
-            // This handles the "dynamic update per draw" requirement.
-            
             var array = uniforms.ToArray();
             _transforms.AddRange(array);
             
-            cl.UpdateBuffer(_buffer, 0, array);
-        }
-
-        public void UpdateAll(ReadOnlySpan<ModelUniform> uniforms)
-        {
-            _transforms.Clear();
-            if (uniforms.Length == 0) 
-            {
-                // Console.WriteLine("[ModelUniformBuffer] UpdateAll skipped (0 instances)");
-                return;
-            }
-
-            // Console.WriteLine($"[ModelUniformBuffer] Updating {uniforms.Length} instances");
-
-            EnsureCapacity(uniforms.Length);
-            
-            _transforms.AddRange(uniforms.ToArray()); // Keep local cache in sync if needed
-            
-            _gd.UpdateBuffer(_buffer, 0, uniforms);
+            _gd.UpdateBuffer(_buffer, 0, array);
         }
 
         public void EnsureCapacity(int capacity)
