@@ -295,6 +295,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         if (_lastScreenSize.X == width && _lastScreenSize.Y == height) return;
         _lastScreenSize = new Vector2(width, height);
 
+        _gd.WaitForIdle(); // Critical: ensure resources not in use
         var factory = _gd.ResourceFactory;
 
         _lightGridTexture?.Dispose();
@@ -769,6 +770,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             if (node.Light != null)
             {
                 _lightNodes.Add(node);
+                _structureChanged = true;
             }
         });
 

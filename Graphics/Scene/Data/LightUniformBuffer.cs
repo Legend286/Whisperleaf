@@ -84,6 +84,7 @@ public class LightUniformBuffer : IDisposable
         uint sizeNeeded = (uint)_lights.Count * _stride;
         if (_buffer.SizeInBytes < sizeNeeded)
         {
+            _gd.WaitForIdle(); // Critical: ensure not in use by GPU
             _buffer.Dispose();
             // Double capacity or match needed
             uint newSize = Math.Max(sizeNeeded, _buffer.SizeInBytes * 2);

@@ -23,6 +23,7 @@ layout(std140, set = 1, binding = 0) buffer ModelTransforms {
 
 layout(set = 4, binding = 0) uniform OrthoLight {
     mat4 u_LightViewProj;
+    mat4 u_ShadowViewProj;
     vec4 u_LightDir;
     vec4 u_LightColor;
 };

@@ -13,16 +13,6 @@ class Program
     {
         var window = new Window(1920, 1080, $"Whisperleaf Renderer");
         var renderer = new Renderer(window);
-
-        // var defaultScenePath = Path.Combine("Resources", "Scenes", "Bistro_Godot.wlscene");
-        // if (File.Exists(defaultScenePath))
-        // {
-        //     renderer.LoadScene(defaultScenePath);
-        // }
-        // else
-        // {
-        //     Console.WriteLine($"No default scene found at '{defaultScenePath}'. Use the editor to import a scene.");
-        // }
         
         var testScene = new LightPerformanceTestScene(renderer);
         renderer.Run((dt) => testScene.Update(renderer));

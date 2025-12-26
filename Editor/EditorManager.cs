@@ -254,7 +254,11 @@ public class EditorManager : IDisposable {
     public void Update(float deltaTime, InputSnapshot snapshot) {
         _imguiController.Update(deltaTime, snapshot);
         _thumbnailGenerator.Update();
-        _materialEditor.Viewport.Update(deltaTime);
+        
+        if (_materialEditor.IsOpen)
+        {
+            _materialEditor.Viewport.Update(deltaTime);
+        }
         
         // Shortcuts
         if (InputManager.IsKeyDown(Key.ControlLeft) || InputManager.IsKeyDown(Key.ControlRight))

@@ -348,20 +348,26 @@ void main()
     vec3 finalColor = lighting + ambient + emissive;
 
     if (u_DebugMode == 1) {
-        // Rainbow Heatmap for Light Culling
-        float t = float(count) / 10.0; // Per-tile light count
+        // Rainbow Heatmap for Light Culling (0 to 20+ lights)
+        float maxLights = 20.0;
+        float t = clamp(float(count) / maxLights, 0.0, 1.0);
+        
         vec3 heatmap;
-        if (t <= 0.0) heatmap = vec3(0.0, 0.0, 0.5); // Deep blue for 0
-        else if (t < 0.25) heatmap = mix(vec3(0, 0, 1), vec3(0, 1, 1), t * 4.0); // Blue to Cyan
-        else if (t < 0.5)  heatmap = mix(vec3(0, 1, 1), vec3(0, 1, 0), (t - 0.25) * 4.0); // Cyan to Green
-        else if (t < 0.75) heatmap = mix(vec3(0, 1, 0), vec3(1, 1, 0), (t - 0.5) * 4.0); // Green to Yellow
-        else               heatmap = mix(vec3(1, 1, 0), vec3(1, 0, 0), clamp((t - 0.75) * 4.0, 0.0, 1.0)); // Yellow to Red
+        if (count == 0) {
+            heatmap = vec3(0.0, 0.0, 0.2); // Very dark blue for no lights
+        } else {
+            // Rainbow scale: Blue (0) -> Cyan (0.25) -> Green (0.5) -> Yellow (0.75) -> Red (1.0)
+            if (t < 0.25)      heatmap = mix(vec3(0, 0, 1), vec3(0, 1, 1), t * 4.0);
+            else if (t < 0.5)  heatmap = mix(vec3(0, 1, 1), vec3(0, 1, 0), (t - 0.25) * 4.0);
+            else if (t < 0.75) heatmap = mix(vec3(0, 1, 0), vec3(1, 1, 0), (t - 0.5) * 4.0);
+            else               heatmap = mix(vec3(1, 1, 0), vec3(1, 0, 0), (t - 0.75) * 4.0);
+        }
         
-        finalColor = mix(finalColor, heatmap, 0.7);
+        finalColor = mix(finalColor, heatmap, 0.8);
         
-        // Tile Grid
+        // Clearer Tile Grid
         vec2 grid = fract(gl_FragCoord.xy / 16.0);
-        if (grid.x < 0.05 || grid.y < 0.05) finalColor = vec3(1.0);
+        if (grid.x < 0.03 || grid.y < 0.03) finalColor = vec3(1.0);
     }
 
     float alpha = baseTex.a * u_BaseColorFactor.a;

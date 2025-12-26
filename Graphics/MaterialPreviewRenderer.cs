@@ -224,6 +224,9 @@ public class MaterialPreviewRenderer : IDisposable
             return;
         }
 
+        _gd.WaitForIdle();
+        _previewMaterial.Dispose(); // Dispose old GPU resources before re-uploading
+
         _previewMaterial.Name = asset.Name;
         _previewMaterial.BaseColorFactor = asset.BaseColorFactor;
         _previewMaterial.EmissiveFactor = asset.EmissiveFactor;
@@ -245,6 +248,8 @@ public class MaterialPreviewRenderer : IDisposable
         try {
             Console.WriteLine($"[MaterialPreview] Setting mesh: {meshPath}");
             var data = WlMeshFormat.Read(meshPath, out string hash);
+            
+            _gd.WaitForIdle();
             _previewMesh?.Dispose();
             _previewMesh = new MeshGpu(_geometryBuffer, data);
             
@@ -366,6 +371,7 @@ public class MaterialPreviewRenderer : IDisposable
 
         _cl.End();
         _gd.SubmitCommands(_cl);
+        _gd.WaitForIdle(); // Critical synchronization
     }
 
     public Texture GetTexture() => _colorTarget;

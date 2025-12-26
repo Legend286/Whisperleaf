@@ -119,8 +119,6 @@ public class Renderer
 
     public void AddCustomMesh(string name, MeshData data) => _scenePass.AddCustomMesh(name, data);
 
-    public void RefreshScene() => _scenePass.RefreshStructure();
-
     public void ResizeViewport(uint width, uint height)
     {
         _window.graphicsDevice.WaitForIdle();
@@ -249,104 +247,73 @@ public class Renderer
             _scenePass.UpdateModelBuffer();
 
             // Parallel Render Passes (Shadows, CSM, Depth) - RECORDING
-            Parallel.Invoke(
-                () =>
+            // Combine all commands into one list
+            _cl.Begin();
+
+            if (camera != null)
+            {
+                // 1. Shadow Pass
+                for (int i = 0; i < ShadowAtlas.GetLayerCount(); i++)
                 {
-                    _shadowCL.Begin();
-                    // Clear Shadow Maps
-                    for (int i = 0; i < ShadowAtlas.GetLayerCount(); i++)
-                    {
-                        _shadowCL.SetFramebuffer(ShadowAtlas.GetFramebuffer(i));
-                        _shadowCL.ClearDepthStencil(1.0f);
-                    }
-                    if (camera != null)
-                    {
-                        _shadowPass.Render(_window.graphicsDevice, _shadowCL, ShadowAtlas, _scenePass);
-                    }
-                    _shadowCL.End();
-                },
-                () =>
-                {
-                    _csmCL.Begin();
-                    if (camera != null && _sunActiveThisFrame)
-                    {
-                        _csmPass.Render(_csmCL, CsmAtlas, _scenePass);
-                    }
-                    _csmCL.End();
-                },
-                () =>
-                {
-                    _depthCL.Begin();
-                    _depthCL.SetFramebuffer(_viewFramebuffer);
-                    _depthCL.ClearDepthStencil(1.0f);
-                    if (camera != null)
-                    {
-                        _depthPass.Render(_depthCL, _scenePass, camera);
-                    }
-                    _depthCL.End();
+                    _cl.SetFramebuffer(ShadowAtlas.GetFramebuffer(i));
+                    _cl.ClearDepthStencil(1.0f);
                 }
-            );
-            
-            // 1. Submit parallel passes FIRST. Depth must be on GPU before main pass.
-            _window.graphicsDevice.SubmitCommands(_shadowCL);
-            if (_sunActiveThisFrame) _window.graphicsDevice.SubmitCommands(_csmCL);
-            _window.graphicsDevice.SubmitCommands(_depthCL);
+                _shadowPass.Render(_window.graphicsDevice, _cl, ShadowAtlas, _scenePass);
 
-            // 2. Now record and submit the "Prepare" work (Uniforms, Light Culling)
-            _cl.Begin();
-            if (camera != null)
-            {
+                // 2. CSM Pass
+                if (_sunActiveThisFrame)
+                {
+                    _csmPass.Render(_cl, CsmAtlas, _scenePass);
+                }
+
+                // 3. Depth Pre-pass
+                if (_viewFramebuffer != null)
+                {
+                    _cl.SetFramebuffer(_viewFramebuffer);
+                    _cl.ClearDepthStencil(1.0f);
+                    _depthPass.Render(_cl, _scenePass, camera);
+                }
+
+                // 4. Prepare work (Light culling uses cl)
                 _scenePass.PrepareRender(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
-            }
-            _cl.End();
-            _window.graphicsDevice.SubmitCommands(_cl);
 
-            // 3. Finally record the main pass
-            _cl.Begin();
+                // 5. Main Pass
+                _cl.SetFramebuffer(_viewFramebuffer);
+                _cl.ClearColorTarget(0, RgbaFloat.Black);
+                _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
 
-            // Main Pass - Render to Game View Framebuffer
-            _cl.SetFramebuffer(_viewFramebuffer);
-            _cl.ClearColorTarget(0, RgbaFloat.Black);
-            // DO NOT clear depth here, DepthPass did it
-
-            _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
-
-            foreach (var pass in _passes)
-            {
-                pass.Render(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
-            }
-            
-            if (camera != null)
-            {
+                foreach (var pass in _passes)
+                {
+                    pass.Render(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
+                }
+                
                 _skyboxPass.Render(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
+
+                var stats = new Editor.RenderStats
+                {
+                    DrawCalls = _scenePass.DrawCalls,
+                    RenderedInstances = _scenePass.RenderedInstances,
+                    RenderedTriangles = _scenePass.RenderedTriangles,
+                    RenderedVertices = _scenePass.RenderedVertices,
+                    SourceMeshes = _scenePass.SourceMeshes,
+                    SourceVertices = _scenePass.SourceVertices,
+                    SourceTriangles = _scenePass.SourceIndices / 3,
+                    TotalInstances = _scenePass.TotalInstances,
+                    UniqueMaterials = _scenePass.UniqueMaterialCount,
+                    NodesVisited = _scenePass.CullingStats.NodesVisited,
+                    NodesCulled = _scenePass.CullingStats.NodesCulled,
+                    LeafsTested = _scenePass.CullingStats.LeafsTested,
+                    TrianglesCulled = _scenePass.TotalSceneTriangles - _scenePass.RenderedTriangles
+                };
+                _editorManager.UpdateStats(stats);
+
+                _scenePass.DrawDebug(_immediateRenderer, _editorManager.ShowBVH, _editorManager.ShowDynamicBVH, _editorManager.ShowSelection);
+                _immediateRenderer.Render(_cl, camera, screenSize);
             }
 
-            var stats = new Editor.RenderStats
-            {
-                DrawCalls = _scenePass.DrawCalls,
-                RenderedInstances = _scenePass.RenderedInstances,
-                RenderedTriangles = _scenePass.RenderedTriangles,
-                RenderedVertices = _scenePass.RenderedVertices,
-                SourceMeshes = _scenePass.SourceMeshes,
-                SourceVertices = _scenePass.SourceVertices,
-                SourceTriangles = _scenePass.SourceIndices / 3,
-                TotalInstances = _scenePass.TotalInstances,
-                UniqueMaterials = _scenePass.UniqueMaterialCount,
-                NodesVisited = _scenePass.CullingStats.NodesVisited,
-                NodesCulled = _scenePass.CullingStats.NodesCulled,
-                LeafsTested = _scenePass.CullingStats.LeafsTested,
-                TrianglesCulled = _scenePass.TotalSceneTriangles - _scenePass.RenderedTriangles
-            };
-            _editorManager.UpdateStats(stats);
-
-            _scenePass.DrawDebug(_immediateRenderer, _editorManager.ShowBVH, _editorManager.ShowDynamicBVH, _editorManager.ShowSelection);
-            if (camera != null) _immediateRenderer.Render(_cl, camera, screenSize);
-
-            // Render ImGui to Swapchain
+            // 6. ImGui Pass
             _cl.SetFramebuffer(_window.graphicsDevice.MainSwapchain.Framebuffer);
             _cl.ClearColorTarget(0, RgbaFloat.Black);
-            // Note: ImGui clears its own depth if needed or ignores it. We don't necessarily need to clear depth here if ImGui is just overlay.
-
             _editorManager.Render(_cl);
 
             _cl.End();
