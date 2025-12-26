@@ -22,7 +22,7 @@ namespace Whisperleaf.AssetPipeline
         // PBR Factors
         public Vector4 BaseColorFactor { get; set; } = Vector4.One;
         public Vector3 EmissiveFactor { get; set; } = Vector3.Zero;
-        public float MetallicFactor { get; set; } = 1.0f;
+        public float MetallicFactor { get; set; } = 0.0f;
         public float RoughnessFactor { get; set; } = 1.0f;
         
         // Alpha

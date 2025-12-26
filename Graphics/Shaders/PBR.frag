@@ -92,8 +92,8 @@ float CalcCsm(vec3 worldPos, vec3 N, vec3 L) {
     mat4 viewProj = u_CascadeViewProj[cascadeIndex];
     
     float NdotL = max(dot(N, L), 0.0);
-    float bias = 0.005 * (1.0 - NdotL);
-    vec3 biasedWorldPos = worldPos + normalize(N) * bias;
+    float bias = 0.0000; // Almost no bias
+    vec3 biasedWorldPos = worldPos;
     
     vec4 posShadow = viewProj * vec4(biasedWorldPos, 1.0);
     vec3 projCoords = posShadow.xyz / posShadow.w;
@@ -103,17 +103,17 @@ float CalcCsm(vec3 worldPos, vec3 N, vec3 L) {
     projCoords.y *= -1;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
     
-    // Receiver plane depth bias using derivatives
-    float dz_du = dFdx(projCoords.z);
-    float dz_dv = dFdy(projCoords.z);
-    float slopeBias = max(abs(dz_du), abs(dz_dv));
-    
     float visibility = 0.0;
     float filterScale = 1.0 / (1.0 + float(cascadeIndex));
     vec2 texelSize = vec2(1.0 / 4096.0) * filterScale;
     
     // Combine slope bias with a tiny constant to handle flat surfaces
-    float csmBias = max(0.00002 * (1.0 + float(cascadeIndex)), slopeBias);
+    float csmBias = 0.000005; // Base tiny bias for opaque (backface casting)
+    
+    // Non-opaque (Mask/Blend) are double-sided and cast shadows from front-faces too
+    if (u_AlphaMode != 0) {
+        csmBias = 0.0002 * (1.0 + float(cascadeIndex)); 
+    }
     
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
@@ -134,8 +134,8 @@ float CalcShadow(int index, vec3 worldPos, vec3 N, vec3 L, vec3 lightPos, float 
     float dist = distance(lightPos, worldPos);
     float proximity = clamp(1.0 - (dist / lightRadius), 0.0, 1.0);
 
-    float normalOffset = (0.002 * (1.0 - NdotL) + 0.02 * proximity);
-    vec3 biasedWorldPos = worldPos + normalize(N) * normalOffset;
+    float normalOffset = 0.000; // Almost no bias
+    vec3 biasedWorldPos = worldPos;
     vec4 posLight = info.viewProj * vec4(biasedWorldPos, 1.0);
 
     vec3 projCoords = posLight.xyz / posLight.w;
@@ -148,7 +148,10 @@ float CalcShadow(int index, vec3 worldPos, vec3 N, vec3 L, vec3 lightPos, float 
     vec2 uv = info.atlasRect.xy + projCoords.xy * info.atlasRect.z;
     float layer = info.atlasRect.w;
     float currentDepth = projCoords.z;
-    float bias = 0.0002;
+    float bias = 0.000005; // Base tiny bias for opaque
+    if (u_AlphaMode != 0) {
+        bias = 0.0002; // Small bias for double-sided
+    }
     vec2 minUV = info.atlasRect.xy;
     vec2 maxUV = info.atlasRect.xy + vec2(info.atlasRect.z);
 
@@ -241,10 +244,16 @@ void main()
     float roughness;
     float ao;
 
-    vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
-    ao        = rma.r;
-    roughness = rma.g * u_RoughnessFactor;
-    metallic  = rma.b * u_MetallicFactor;
+    if (u_UsePackedRMA != 0) {
+        vec3 rma = texture(sampler2D(MetallicTex, MainSampler), f_UV).rgb;
+        ao        = rma.r;
+        roughness = rma.g * u_RoughnessFactor;
+        metallic  = rma.b * u_MetallicFactor;
+    } else {
+        ao        = texture(sampler2D(OcclusionTex, MainSampler), f_UV).r;
+        roughness = texture(sampler2D(RoughnessTex, MainSampler), f_UV).g * u_RoughnessFactor;
+        metallic  = texture(sampler2D(MetallicTex, MainSampler), f_UV).b * u_MetallicFactor;
+    }
     
     roughness = clamp(roughness, 0.04, 1.0);
     metallic  = clamp(metallic, 0.0, 1.0);
@@ -339,9 +348,18 @@ void main()
     vec3 finalColor = lighting + ambient + emissive;
 
     if (u_DebugMode == 1) {
-        float t = float(u_LightCount) / 10.0; // Use u_LightCount for heatmap
-        vec3 heatmap = mix(vec3(0, 0, 1), vec3(1, 0, 0), clamp(t, 0.0, 1.0));
-        finalColor = mix(finalColor, heatmap, 0.5);
+        // Rainbow Heatmap for Light Culling
+        float t = float(count) / 10.0; // Per-tile light count
+        vec3 heatmap;
+        if (t <= 0.0) heatmap = vec3(0.0, 0.0, 0.5); // Deep blue for 0
+        else if (t < 0.25) heatmap = mix(vec3(0, 0, 1), vec3(0, 1, 1), t * 4.0); // Blue to Cyan
+        else if (t < 0.5)  heatmap = mix(vec3(0, 1, 1), vec3(0, 1, 0), (t - 0.25) * 4.0); // Cyan to Green
+        else if (t < 0.75) heatmap = mix(vec3(0, 1, 0), vec3(1, 1, 0), (t - 0.5) * 4.0); // Green to Yellow
+        else               heatmap = mix(vec3(1, 1, 0), vec3(1, 0, 0), clamp((t - 0.75) * 4.0, 0.0, 1.0)); // Yellow to Red
+        
+        finalColor = mix(finalColor, heatmap, 0.7);
+        
+        // Tile Grid
         vec2 grid = fract(gl_FragCoord.xy / 16.0);
         if (grid.x < 0.05 || grid.y < 0.05) finalColor = vec3(1.0);
     }

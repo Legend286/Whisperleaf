@@ -1,7 +1,11 @@
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Veldrid;
 using Veldrid.SPIRV;
 using Whisperleaf.AssetPipeline;
@@ -20,6 +24,7 @@ namespace Whisperleaf.Graphics.RenderPasses;
 public sealed class GltfPass : IRenderPass, IDisposable {
     private readonly GraphicsDevice _gd;
     private readonly Pipeline _pipeline;
+    private readonly ConcurrentQueue<Action> _mainThreadQueue = new();
     private readonly CameraUniformBuffer _cameraBuffer;
     private readonly ModelUniformBuffer _modelBuffer; // Full set for MDI/Culling
     private readonly ModelUniformBuffer _compactModelBuffer; // Visible set for main pass
@@ -45,6 +50,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private readonly List<SceneNode> _visibleLights = new();
     private readonly List<LightUniform> _manualLights = new();
     private SceneNode? _selectedNode;
+    private bool _structureChanged;
 
     // Forward+ Resources
     private Texture _lightGridTexture;
@@ -122,78 +128,84 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         return null;
     }
 
+    public void UpdateMaterial(int index, MaterialAsset asset)
+    {
+        if (index < 0 || index >= _materials.Count) return;
+        var mat = _materials[index];
+        
+        bool texturesChanged = 
+            !string.Equals(mat.BaseColorPath, asset.BaseColorTexture, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(mat.NormalPath, asset.NormalTexture, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(mat.EmissivePath, asset.EmissiveTexture, StringComparison.OrdinalIgnoreCase) ||
+            (mat.UsePackedRMA && !string.Equals(mat.MetallicPath, asset.RMATexture, StringComparison.OrdinalIgnoreCase)) ||
+            (!mat.UsePackedRMA && !string.IsNullOrEmpty(asset.RMATexture));
+
+        mat.Name = asset.Name;
+        mat.BaseColorFactor = asset.BaseColorFactor;
+        mat.EmissiveFactor = asset.EmissiveFactor;
+        mat.MetallicFactor = asset.MetallicFactor;
+        mat.RoughnessFactor = asset.RoughnessFactor;
+        mat.AlphaMode = asset.AlphaMode;
+        mat.AlphaCutoff = asset.AlphaCutoff;
+        
+        mat.BaseColorPath = asset.BaseColorTexture;
+        mat.NormalPath = asset.NormalTexture;
+        mat.EmissivePath = asset.EmissiveTexture;
+        
+        bool usePacked = !string.IsNullOrEmpty(asset.RMATexture);
+        if (usePacked) {
+            mat.MetallicPath = asset.RMATexture;
+            mat.RoughnessPath = asset.RMATexture;
+            mat.OcclusionPath = asset.RMATexture;
+        } else {
+            mat.MetallicPath = null;
+            mat.RoughnessPath = null;
+            mat.OcclusionPath = null;
+        }
+        mat.UsePackedRMA = usePacked;
+
+        if (texturesChanged)
+        {
+            _gd.WaitForIdle();
+            mat.Dispose(); // This disposes descriptors too, need to be careful if in use? 
+            // Wait for idle ensures it's safe.
+            MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, mat);
+        }
+        else
+        {
+            if (mat.ParamsBuffer != null)
+            {
+                var materialParams = new MaterialParams(
+                    mat.BaseColorFactor,
+                    mat.EmissiveFactor,
+                    mat.MetallicFactor,
+                    mat.RoughnessFactor,
+                    mat.UsePackedRMA,
+                    mat.AlphaCutoff,
+                    (int)mat.AlphaMode
+                );
+                _gd.UpdateBuffer(mat.ParamsBuffer, 0, ref materialParams);
+            }
+        }
+    }
+
     public void UpdateMaterial(string path, MaterialAsset asset)
     {
         string fullPath = Path.GetFullPath(path);
-        foreach (var mat in _materials)
+        for (int i = 0; i < _materials.Count; i++)
         {
+            var mat = _materials[i];
             // Normalize existing path
             string? matPath = mat.AssetPath != null ? Path.GetFullPath(mat.AssetPath) : null;
             
             if (string.Equals(matPath, fullPath, StringComparison.OrdinalIgnoreCase))
             {
-                // Check if textures changed
-                bool texturesChanged = 
-                    !string.Equals(mat.BaseColorPath, asset.BaseColorTexture, StringComparison.OrdinalIgnoreCase) ||
-                    !string.Equals(mat.NormalPath, asset.NormalTexture, StringComparison.OrdinalIgnoreCase) ||
-                    !string.Equals(mat.EmissivePath, asset.EmissiveTexture, StringComparison.OrdinalIgnoreCase) ||
-                    (mat.UsePackedRMA && !string.Equals(mat.MetallicPath, asset.RMATexture, StringComparison.OrdinalIgnoreCase)) ||
-                    (!mat.UsePackedRMA && !string.IsNullOrEmpty(asset.RMATexture));
-
-                // Update CPU Data
-                mat.Name = asset.Name;
-                mat.BaseColorFactor = asset.BaseColorFactor;
-                mat.EmissiveFactor = asset.EmissiveFactor;
-                mat.MetallicFactor = asset.MetallicFactor;
-                mat.RoughnessFactor = asset.RoughnessFactor;
-                mat.AlphaMode = asset.AlphaMode;
-                mat.AlphaCutoff = asset.AlphaCutoff;
-                
-                mat.BaseColorPath = asset.BaseColorTexture;
-                mat.NormalPath = asset.NormalTexture;
-                mat.EmissivePath = asset.EmissiveTexture;
-                
-                bool usePacked = !string.IsNullOrEmpty(asset.RMATexture);
-                if (usePacked) {
-                    mat.MetallicPath = asset.RMATexture;
-                    mat.RoughnessPath = asset.RMATexture;
-                    mat.OcclusionPath = asset.RMATexture;
-                } else {
-                    mat.MetallicPath = null;
-                    mat.RoughnessPath = null;
-                    mat.OcclusionPath = null;
-                }
-                mat.UsePackedRMA = usePacked;
-
-                if (texturesChanged)
-                {
-                    // Heavy update
-                    _gd.WaitForIdle();
-                    mat.Dispose();
-                    MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, mat);
-                }
-                else
-                {
-                    // Light update (Params only)
-                    if (mat.ParamsBuffer != null)
-                    {
-                        var materialParams = new MaterialParams(
-                            mat.BaseColorFactor,
-                            mat.EmissiveFactor,
-                            mat.MetallicFactor,
-                            mat.RoughnessFactor,
-                            mat.UsePackedRMA,
-                            mat.AlphaCutoff,
-                            (int)mat.AlphaMode
-                        );
-                        _gd.UpdateBuffer(mat.ParamsBuffer, 0, ref materialParams);
-                    }
-                }
+                UpdateMaterial(i, asset);
             }
         }
     }
 
-    public GltfPass(GraphicsDevice gd, ResourceLayout shadowAtlasLayout, ResourceLayout csmLayout) {
+    public GltfPass(GraphicsDevice gd, ResourceLayout shadowAtlasLayout, ResourceLayout csmLayout, OutputDescription outputDescription) {
         _gd = gd;
         _geometryBuffer = new GeometryBuffer(gd);
 
@@ -201,6 +213,14 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _modelBuffer = new ModelUniformBuffer(gd);
         _compactModelBuffer = new ModelUniformBuffer(gd);
         _lightBuffer = new LightUniformBuffer(gd);
+        _lightBuffer.BufferResized += () => {
+             // Defer to next frame or force resize immediately?
+             // Since this happens during PrepareRender (UpdateGPU), it's safe to resize immediately
+             // provided we aren't using the old set yet.
+             // PrepareRender calls CullLights immediately after UpdateGPU.
+             // So we must update the set NOW.
+             ResizeLightCullingResources((uint)_lastScreenSize.X, (uint)_lastScreenSize.Y);
+        };
         _shadowDataBuffer = new ShadowDataBuffer(gd);
 
         InitializeLightCulling();
@@ -217,7 +237,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             "Graphics/Shaders/PBR.vert",
             "Graphics/Shaders/PBR.frag",
             vertexLayout,
-            gd.MainSwapchain.Framebuffer,
+            outputDescription,
             enableDepth: true,
             enableBlend: false,
             extraLayouts: new[] {
@@ -323,7 +343,15 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     private void CullLights(CommandList cl)
     {
-        cl.UpdateBuffer(_lightIndexCounterBuffer, 0, 0u);
+        if (_lightIndexCounterBuffer == null)
+        {
+            Console.WriteLine("[GltfPass] CullLights skipped: CounterBuffer is null");
+            return;
+        }
+        
+        // Reset counter
+        uint[] resetCount = { 0u };
+        cl.UpdateBuffer(_lightIndexCounterBuffer, 0, resetCount);
         
         cl.SetPipeline(_lightCullPipeline);
         cl.SetComputeResourceSet(0, _lightCullResourceSet);
@@ -530,9 +558,292 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         SortAndUploadInstances();
     }
 
+    private int[] LoadMaterials(SceneAsset scene)
+    {
+        // For sync loading, we just call the async prep but wait for it (simpler than duplicating logic)
+        // Actually, just call UploadMaterials with a freshly prepared array
+        var prepared = PrepareMaterials(scene);
+        return UploadMaterials(scene, prepared);
+    }
+
+    private void PreloadImage(string? path, ref Image<Rgba32>? image)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        
+        // Skip if already on GPU
+        if (CachedTextureUploader.IsCached(path)) return;
+        
+        try 
+        {
+            if (Path.GetExtension(path).Equals(".wltex", StringComparison.OrdinalIgnoreCase))
+            {
+                 image = CachedTextureUploader.LoadImage(path);
+            }
+            else if (File.Exists(path))
+            {
+                 image = Image.Load<Rgba32>(path);
+            }
+        }
+        catch {}
+    }
+
+    private MaterialData?[] PrepareMaterials(SceneAsset scene)
+    {
+        var materials = new MaterialData?[scene.Materials.Count];
+        
+        Parallel.For(0, scene.Materials.Count, i =>
+        {
+            var src = scene.Materials[i];
+            
+            // Check cache (thread-safe check only)
+            string hash = (!string.IsNullOrEmpty(src.AssetPath)) ? "FILE:" + src.AssetPath : ComputeMaterialHash(src);
+            bool isCached = false;
+            lock (_materialCache) { if (_materialCache.ContainsKey(hash)) isCached = true; }
+            if (isCached) return;
+
+            MaterialData? material = null;
+            if (!string.IsNullOrEmpty(src.AssetPath) && File.Exists(src.AssetPath))
+            {
+                 try 
+                 {
+                    var asset = MaterialAsset.Load(src.AssetPath);
+                    material = new MaterialData
+                    {
+                        Name = asset.Name,
+                        BaseColorFactor = asset.BaseColorFactor,
+                        EmissiveFactor = asset.EmissiveFactor,
+                        MetallicFactor = asset.MetallicFactor,
+                        RoughnessFactor = asset.RoughnessFactor,
+                        AlphaMode = asset.AlphaMode,
+                        AlphaCutoff = asset.AlphaCutoff,
+                        BaseColorPath = asset.BaseColorTexture,
+                        NormalPath = asset.NormalTexture,
+                        MetallicPath = asset.RMATexture, 
+                        RoughnessPath = asset.RMATexture,
+                        OcclusionPath = asset.RMATexture,
+                        EmissivePath = asset.EmissiveTexture,
+                        UsePackedRMA = !string.IsNullOrEmpty(asset.RMATexture),
+                        AssetPath = src.AssetPath
+                    };
+                 }
+                 catch {}
+            }
+            
+            if (material == null)
+            {
+                material = new MaterialData {
+                    Name = src.Name,
+                    BaseColorFactor = src.BaseColorFactor,
+                    EmissiveFactor = src.EmissiveFactor,
+                    MetallicFactor = src.MetallicFactor,
+                    RoughnessFactor = src.RoughnessFactor,
+                    UsePackedRMA = !string.IsNullOrEmpty(src.RMAHash)
+                };
+                
+                material.BaseColorPath = ResolveCachedTexture(src.BaseColorHash);
+                material.NormalPath = ResolveCachedTexture(src.NormalHash);
+                material.EmissivePath = ResolveCachedTexture(src.EmissiveHash);
+                var rmaPath = ResolveCachedTexture(src.RMAHash);
+                if (material.UsePackedRMA && rmaPath != null) {
+                    material.MetallicPath = rmaPath;
+                    material.RoughnessPath = rmaPath;
+                    material.OcclusionPath = rmaPath;
+                }
+            }
+
+            if (material != null)
+            {
+                PreloadImage(material.BaseColorPath, ref material.BaseColorImage);
+                PreloadImage(material.NormalPath, ref material.NormalImage);
+                PreloadImage(material.EmissivePath, ref material.EmissiveImage);
+                if (material.UsePackedRMA)
+                {
+                     PreloadImage(material.MetallicPath, ref material.MetallicImage);
+                }
+                else
+                {
+                     PreloadImage(material.MetallicPath, ref material.MetallicImage);
+                     PreloadImage(material.RoughnessPath, ref material.RoughnessImage);
+                     PreloadImage(material.OcclusionPath, ref material.OcclusionImage);
+                }
+                
+                materials[i] = material;
+            }
+        });
+        
+        return materials;
+    }
+
+    private int[] UploadMaterials(SceneAsset scene, MaterialData?[] preparedMaterials) {
+        int[] map = new int[scene.Materials.Count];
+        
+        for (int i = 0; i < scene.Materials.Count; i++) {
+            var src = scene.Materials[i];
+            
+            // 1. Check Cache
+            string hash = (!string.IsNullOrEmpty(src.AssetPath)) ? "FILE:" + src.AssetPath : ComputeMaterialHash(src);
+            if (_materialCache.TryGetValue(hash, out int cachedIndex)) {
+                map[i] = cachedIndex;
+                
+                // If we prepared data but found it cached (race condition or re-check), dispose the prepared images
+                preparedMaterials[i]?.Dispose();
+                continue;
+            }
+
+            // 2. Use Prepared
+            var material = preparedMaterials[i];
+            if (material != null)
+            {
+                int newIndex = _materials.Count;
+                map[i] = newIndex;
+                _materialCache[hash] = newIndex;
+
+                // This is fast now (just GPU copy)
+                MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, material);
+                
+                // Clean up images immediately after upload
+                material.BaseColorImage?.Dispose(); material.BaseColorImage = null;
+                material.NormalImage?.Dispose(); material.NormalImage = null;
+                material.EmissiveImage?.Dispose(); material.EmissiveImage = null;
+                material.MetallicImage?.Dispose(); material.MetallicImage = null;
+                material.RoughnessImage?.Dispose(); material.RoughnessImage = null;
+                material.OcclusionImage?.Dispose(); material.OcclusionImage = null;
+
+                _materials.Add(material);
+            }
+        }
+        return map;
+    }
+
     public void LoadScene(string scenePath) {
-        var sceneAsset = SceneAsset.Load(scenePath);
-        LoadScene(sceneAsset, false);
+        LoadSceneAsync(scenePath);
+    }
+
+    public void LoadSceneAsync(string scenePath, bool additive = false)
+    {
+        Task.Run(() =>
+        {
+            try 
+            {
+                var sceneAsset = SceneAsset.Load(scenePath);
+                
+                // 1. Prepare Materials in Background (Heavy IO)
+                var materials = PrepareMaterials(sceneAsset);
+                
+                _mainThreadQueue.Enqueue(() =>
+                {
+                    if (!additive) ClearResources();
+                    
+                    // 2. Upload Materials on Main Thread (Fast-ish GPU ops)
+                    int[] materialMap = UploadMaterials(sceneAsset, materials);
+                    
+                    Task.Run(() => LoadMeshesAsync(sceneAsset, materialMap));
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GltfPass] Async load failed: {ex.Message}");
+            }
+        });
+    }
+
+    private void LoadMeshesAsync(SceneAsset scene, int[] materialMap)
+    {
+        if (scene.RootNodes.Count == 0) return;
+
+        foreach (var node in scene.RootNodes)
+        {
+            TraverseAndLoadAsync(node, Matrix4x4.Identity, null, materialMap);
+        }
+    }
+
+    private void TraverseAndLoadAsync(SceneNode node, Matrix4x4 parentWorld, SceneNode? parent, int[] materialMap)
+    {
+        var worldTransform = node.LocalTransform * parentWorld;
+
+        // Capture state for main thread
+        _mainThreadQueue.Enqueue(() =>
+        {
+            _nodeParents[node] = parent;
+            _nodeWorldTransforms[node] = worldTransform;
+            if (node.Light != null)
+            {
+                _lightNodes.Add(node);
+            }
+        });
+
+        if (node.Mesh != null)
+        {
+            string hash = node.Mesh.MeshHash;
+            bool alreadyLoaded = false;
+            
+            // Check if already in cache (lock for safety, though simplistic)
+            lock (_meshCache)
+            {
+                if (_meshCache.ContainsKey(hash)) alreadyLoaded = true;
+            }
+
+            MeshData? data = null;
+            if (!alreadyLoaded)
+            {
+                if (AssetCache.HasMesh(hash, out var meshPath))
+                {
+                    try 
+                    {
+                        // IO Heavy Operation
+                        data = WlMeshFormat.Read(meshPath, out _);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[GltfPass] Failed to read mesh async: {ex.Message}");
+                    }
+                }
+            }
+
+            _mainThreadQueue.Enqueue(() =>
+            {
+                // Final check and creation on Main Thread
+                AddMeshInstance(node, worldTransform, data, node.Mesh.MaterialIndex, materialMap);
+            });
+        }
+
+        foreach (var child in node.Children)
+        {
+            TraverseAndLoadAsync(child, worldTransform, node, materialMap);
+        }
+    }
+
+    private void AddMeshInstance(SceneNode node, Matrix4x4 world, MeshData? data, int matIdx, int[] materialMap)
+    {
+        MeshGpu? meshGpu = null;
+        string hash = node.Mesh!.MeshHash;
+
+        if (_meshCache.TryGetValue(hash, out meshGpu))
+        {
+            // Already exists
+        }
+        else if (data != null)
+        {
+            // Create new
+            meshGpu = new MeshGpu(_geometryBuffer, data);
+            _meshCache[hash] = meshGpu;
+            SourceVertices += data.Vertices.Length / 12;
+            SourceIndices += data.Indices.Length;
+        }
+
+        if (meshGpu != null)
+        {
+            int globalMaterialIndex = 0;
+            if (matIdx >= 0 && matIdx < materialMap.Length)
+            {
+                globalMaterialIndex = materialMap[matIdx];
+            }
+
+            int transformIndex = _modelBuffer.Allocate(world);
+            int instanceIndex = _meshInstances.Count;
+            _meshInstances.Add(new MeshInstance(meshGpu, globalMaterialIndex, transformIndex, node));
+            _nodeToInstance[node] = instanceIndex;
+        }
     }
 
     public int InstanceCount => _meshInstances.Count;
@@ -607,6 +918,23 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private List<int> _cachedVisibleIndices = new();
 
     public void Update(Camera camera) {
+        // Process Async Queue
+        int operations = 0;
+        bool queueProcessed = false;
+        while (_mainThreadQueue.TryDequeue(out var action))
+        {
+            action();
+            operations++;
+            queueProcessed = true;
+            if (operations > 100) break; // Increased limit for smoother loading
+        }
+
+        if (queueProcessed || _structureChanged)
+        {
+            SortAndUploadInstances();
+            _structureChanged = false;
+        }
+
         // Rebuild dynamic BVH every frame
         RebuildDynamicBVH();
 
@@ -672,9 +1000,6 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     {
         if (camera == null) return;
         
-        // Ensure ModelBuffer has fresh transforms for DepthPass/ShadowPass (MDI)
-        UpdateModelBuffer();
-
         ResizeLightCullingResources((uint)screenSize.X, (uint)screenSize.Y);
         
         _cameraBuffer.Update(gd, camera, screenSize, debugMode);
@@ -832,8 +1157,6 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     private void SortAndUploadInstances() {
         if (_meshInstances.Count == 0 && _lightNodes.Count == 0) return;
-        
-        // Console.WriteLine("[GltfPass] Refreshing Structure...");
 
         // Sort meshes: Opaque first, then AlphaMask, then Blend
         _meshInstances.Sort((a, b) =>
@@ -869,7 +1192,6 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 else _dynamicIndices.Add(i);
             }
 
-
             TotalSceneTriangles += inst.Mesh.IndexCount / 3;
 
             if (!_nodeWorldTransforms.TryGetValue(inst.Node, out var world))
@@ -881,147 +1203,29 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             _nodeToInstance[inst.Node] = i;
         }
 
-
         // Lights
         int meshCount = _meshInstances.Count;
-
         for (int i = 0; i < _lightNodes.Count; i++) {
             var node = _lightNodes[i];
-
             if (!node.IsVisible) continue;
 
             int globalIndex = meshCount + i;
-
             if (node.IsStatic) _staticIndices.Add(globalIndex);
             else _dynamicIndices.Add(globalIndex);
         }
 
+        BuildBVH(_staticBvh, _staticIndices);
+        RebuildDynamicBVH(); 
 
-                        BuildBVH(_staticBvh, _staticIndices);
+        _modelBuffer.EnsureCapacity(_meshInstances.Count);        
+        _modelBuffer.UpdateAll(uniforms);
 
-
-                        RebuildDynamicBVH(); // Ensure dynamic BVH is also updated immediately
-
-
-                        
-
-
-                        _modelBuffer.EnsureCapacity(_meshInstances.Count);        
-
-
-                        _modelBuffer.UpdateAll(uniforms);
-
-
-                        
-
-
-                        StructureVersion++;
-
-
-                    }
-
-
-                
-
-
-                    private int[] LoadMaterials(SceneAsset scene) {
-        int[] map = new int[scene.Materials.Count];
-
-        for (int i = 0; i < scene.Materials.Count; i++) {
-            var src = scene.Materials[i];
-            string hash = "";
-            MaterialData material = null;
-            
-            bool loadedFromFile = false;
-
-            if (!string.IsNullOrEmpty(src.AssetPath) && File.Exists(src.AssetPath)) {
-                hash = "FILE:" + src.AssetPath;
-                
-                if (_materialCache.TryGetValue(hash, out int cachedIndex)) {
-                    map[i] = cachedIndex;
-                    continue;
-                }
-                
-                try 
-                {
-                    var asset = MaterialAsset.Load(src.AssetPath);
-                    material = new MaterialData
-                    {
-                        Name = asset.Name,
-                        BaseColorFactor = asset.BaseColorFactor,
-                        EmissiveFactor = asset.EmissiveFactor,
-                        MetallicFactor = asset.MetallicFactor,
-                        RoughnessFactor = asset.RoughnessFactor,
-                        AlphaMode = asset.AlphaMode,
-                        AlphaCutoff = asset.AlphaCutoff,
-                        
-                        BaseColorPath = asset.BaseColorTexture,
-                        NormalPath = asset.NormalTexture,
-                        MetallicPath = asset.RMATexture, 
-                        RoughnessPath = asset.RMATexture,
-                        OcclusionPath = asset.RMATexture,
-                        EmissivePath = asset.EmissiveTexture,
-                        UsePackedRMA = !string.IsNullOrEmpty(asset.RMATexture),
-                        AssetPath = src.AssetPath
-                    };
-                    loadedFromFile = true;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[GltfPass] Failed to load material asset '{src.AssetPath}': {ex.Message}. Falling back to embedded.");
-                }
-            }
-
-            if (!loadedFromFile)
-            {
-                hash = ComputeMaterialHash(src);
-
-                if (_materialCache.TryGetValue(hash, out int globalIndex)) {
-                    map[i] = globalIndex;
-                    continue;
-                }
-
-                material = new MaterialData {
-                    Name = src.Name,
-                    BaseColorFactor = src.BaseColorFactor,
-                    EmissiveFactor = src.EmissiveFactor,
-                    MetallicFactor = src.MetallicFactor,
-                    RoughnessFactor = src.RoughnessFactor,
-                    UsePackedRMA = !string.IsNullOrEmpty(src.RMAHash)
-                };
-
-                material.BaseColorPath = ResolveCachedTexture(src.BaseColorHash);
-                material.NormalPath = ResolveCachedTexture(src.NormalHash);
-                material.EmissivePath = ResolveCachedTexture(src.EmissiveHash);
-
-                if (material.EmissivePath != null && material.EmissiveFactor == Vector3.Zero) {
-                    material.EmissiveFactor = Vector3.One;
-                }
-
-
-                var rmaPath = ResolveCachedTexture(src.RMAHash);
-
-                if (material.UsePackedRMA && rmaPath != null) {
-                    material.MetallicPath = rmaPath;
-                    material.RoughnessPath = rmaPath;
-                    material.OcclusionPath = rmaPath;
-                }
-            }
-            
-            if (material != null)
-            {
-                int newIndex = _materials.Count;
-                map[i] = newIndex;
-                _materialCache[hash] = newIndex;
-
-                MaterialUploader.Upload(_gd, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout, material);
-                _materials.Add(material);
-            }
-        }
-
-
-        return map;
+        StructureVersion++;
     }
+
+
+                
+
 
     private void LoadMeshes(SceneAsset scene, int[] materialMap) {
         if (scene.RootNodes.Count == 0)

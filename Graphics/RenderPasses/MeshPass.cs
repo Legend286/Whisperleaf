@@ -67,7 +67,7 @@ public class MeshPass : IRenderPass
             "Graphics/Shaders/Mesh.vert",
             "Graphics/Shaders/Mesh.frag",
             vertexLayout,
-            gd.MainSwapchain.Framebuffer,
+            gd.MainSwapchain.Framebuffer.OutputDescription,
             enableDepth: true,
             enableBlend: false,
             extraLayouts: [_cameraBuffer.Layout]

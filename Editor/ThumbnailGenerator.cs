@@ -234,9 +234,9 @@ public class ThumbnailGenerator : IDisposable
                 roughness = mat.RoughnessFactor;
                 metallic = mat.MetallicFactor;
 
-                if (AssetCache.HasTexture(mat.BaseColorHash, out string p1)) { var t = LoadTextureForRender(p1); if(t!=null) { baseColor = t; tempTextures.Add(t); } }
-                if (AssetCache.HasTexture(mat.NormalHash, out string p2)) { var t = LoadTextureForRender(p2); if(t!=null) { normalMap = t; tempTextures.Add(t); } }
-                if (AssetCache.HasTexture(mat.RMAHash, out string p3)) { var t = LoadTextureForRender(p3); if(t!=null) { rmaMap = t; tempTextures.Add(t); } }
+                if (!string.IsNullOrEmpty(mat.BaseColorHash) && AssetCache.HasTexture(mat.BaseColorHash, out string p1)) { var t = LoadTextureForRender(p1); if(t!=null) { baseColor = t; tempTextures.Add(t); } }
+                if (!string.IsNullOrEmpty(mat.NormalHash) && AssetCache.HasTexture(mat.NormalHash, out string p2)) { var t = LoadTextureForRender(p2); if(t!=null) { normalMap = t; tempTextures.Add(t); } }
+                if (!string.IsNullOrEmpty(mat.RMAHash) && AssetCache.HasTexture(mat.RMAHash, out string p3)) { var t = LoadTextureForRender(p3); if(t!=null) { rmaMap = t; tempTextures.Add(t); } }
             }
             
             matSet = _factory.CreateResourceSet(new ResourceSetDescription(_materialLayout,

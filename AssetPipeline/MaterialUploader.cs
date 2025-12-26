@@ -14,14 +14,14 @@ public static class MaterialUploader
         var factory = gd.ResourceFactory;
 
         (mat.BaseColorRef, mat.BaseColorView) =
-            LoadOrDummy(gd, mat.BaseColorPath, srgb: true, new RgbaByte(255,255,255,255), scene);
+            LoadOrDummy(gd, mat.BaseColorPath, mat.BaseColorImage, srgb: true, new RgbaByte(255,255,255,255), scene);
         (mat.NormalRef, mat.NormalView) =
-            LoadOrDummy(gd, mat.NormalPath, srgb: false, new RgbaByte(128,128,255,255), scene);
+            LoadOrDummy(gd, mat.NormalPath, mat.NormalImage, srgb: false, new RgbaByte(128,128,255,255), scene);
 
         if (mat.UsePackedRMA)
         {
             (mat.MetallicRef, mat.MetallicView) =
-                LoadOrDummy(gd, mat.MetallicPath, srgb: false, new RgbaByte(255, (byte)(mat.RoughnessFactor*255), (byte)(mat.MetallicFactor*255), 255), scene);
+                LoadOrDummy(gd, mat.MetallicPath, mat.MetallicImage, srgb: false, new RgbaByte(255, (byte)(mat.RoughnessFactor*255), (byte)(mat.MetallicFactor*255), 255), scene);
 
             // Ref Counted sharing: Manually AddRef because we are assigning to multiple fields
             // The first LoadOrDummy returned a ref with count=1 (or incremented if cached).
@@ -38,16 +38,17 @@ public static class MaterialUploader
         }
         else
         {
+            // Unpacked fallback: Metallic in B, Roughness in G, AO in R
             (mat.MetallicRef, mat.MetallicView) =
-                LoadOrDummy(gd, mat.MetallicPath, srgb: false, new RgbaByte(0,0,(byte)(mat.MetallicFactor*255),255), scene);
+                LoadOrDummy(gd, mat.MetallicPath, mat.MetallicImage, srgb: false, new RgbaByte(0,0,(byte)(mat.MetallicFactor*255),255), scene);
             (mat.RoughnessRef, mat.RoughnessView) =
-                LoadOrDummy(gd, mat.RoughnessPath, srgb: false, new RgbaByte(0,(byte)(mat.RoughnessFactor*255),0,255), scene);
+                LoadOrDummy(gd, mat.RoughnessPath, mat.RoughnessImage, srgb: false, new RgbaByte(0,(byte)(mat.RoughnessFactor*255),0,255), scene);
             (mat.OcclusionRef, mat.OcclusionView) =
-                LoadOrDummy(gd, mat.OcclusionPath, srgb: false, new RgbaByte(255,255,255,255), scene);
+                LoadOrDummy(gd, mat.OcclusionPath, mat.OcclusionImage, srgb: false, new RgbaByte(255,255,255,255), scene);
         }
         
         (mat.EmissiveRef, mat.EmissiveView) =
-            LoadOrDummy(gd, mat.EmissivePath, srgb: true,
+            LoadOrDummy(gd, mat.EmissivePath, mat.EmissiveImage, srgb: true,
                 new RgbaByte(255, 255, 255, 255), scene); // Default to white so factor works
 
         var sampler = factory.CreateSampler(new SamplerDescription(
@@ -88,13 +89,27 @@ public static class MaterialUploader
         ));
     }
 
-    private static (RefCountedTexture refTex, TextureView view) LoadOrDummy(GraphicsDevice gd, string? path, bool srgb, RgbaByte fallbackColor, Assimp.Scene? scene)
+    private static (RefCountedTexture refTex, TextureView view) LoadOrDummy(GraphicsDevice gd, string? path, Image<Rgba32>? preloadedImage, bool srgb, RgbaByte fallbackColor, Assimp.Scene? scene)
     {
         if (!string.IsNullOrWhiteSpace(path))
         {
             // Cached Texture (.wltex)
             if (Path.GetExtension(path).Equals(".wltex", StringComparison.OrdinalIgnoreCase))
             {
+                // Check if we have preloaded image
+                if (preloadedImage != null)
+                {
+                    try
+                    {
+                         var format = srgb ? PixelFormat.R8_G8_B8_A8_UNorm_SRgb : PixelFormat.R8_G8_B8_A8_UNorm;
+                         return CachedTextureUploader.UploadImage(gd, preloadedImage, path, format);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[MaterialUploader] ERROR: Failed to upload preloaded texture '{path}': {ex.Message}");
+                    }
+                }
+                
                 if (File.Exists(path))
                 {
                     try
@@ -119,6 +134,19 @@ public static class MaterialUploader
             {
                 try 
                 {
+                    if (preloadedImage != null)
+                    {
+                        // External textures generally don't use CachedTextureUploader (no .wltex wrapping), 
+                        // but we can use the same pattern or just create directly.
+                        // For consistency, let's assume we used ImageSharpTexture before.
+                        // We will just create directly here.
+                        var pTex = new ImageSharpTexture(preloadedImage, srgb);
+                        var pDevTex = pTex.CreateDeviceTexture(gd, gd.ResourceFactory);
+                        var pView = gd.ResourceFactory.CreateTextureView(pDevTex);
+                        var pRefTex = new RefCountedTexture(pDevTex, path, null);
+                        return (pRefTex, pView);
+                    }
+                    
                     var img = new ImageSharpTexture(path, srgb);
                     var tex = img.CreateDeviceTexture(gd, gd.ResourceFactory);
                     var view = gd.ResourceFactory.CreateTextureView(tex);

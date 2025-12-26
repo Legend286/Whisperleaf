@@ -11,7 +11,7 @@ class Program
 {
     static void Main(string[] args)
     {
-        var window = new Window(1280, 720, $"Whisperleaf Renderer");
+        var window = new Window(1920, 1080, $"Whisperleaf Renderer");
         var renderer = new Renderer(window);
 
         // var defaultScenePath = Path.Combine("Resources", "Scenes", "Bistro_Godot.wlscene");

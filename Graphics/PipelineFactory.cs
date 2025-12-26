@@ -10,7 +10,7 @@ public class PipelineFactory
         string vertexPath,
         string fragmentPath,
         VertexLayoutDescription vertexLayout,
-        Framebuffer target,
+        OutputDescription outputs,
         bool enableDepth = true,
         bool enableBlend = false,
         ResourceLayout[]? extraLayouts = null,
@@ -29,9 +29,9 @@ public class PipelineFactory
                 ? new DepthStencilStateDescription(true, depthWrite, ComparisonKind.LessEqual)
                 : new DepthStencilStateDescription(false, false, ComparisonKind.Always),
             RasterizerState = new RasterizerStateDescription(
-                FaceCullMode.Front,
+                FaceCullMode.Back,
                 PolygonFillMode.Solid,
-                FrontFace.Clockwise,
+                FrontFace.CounterClockwise,
                 depthClipEnabled: true,
                 scissorTestEnabled: false),
             PrimitiveTopology = PrimitiveTopology.TriangleList,
@@ -39,7 +39,7 @@ public class PipelineFactory
             ShaderSet = new ShaderSetDescription(
                 vertexLayouts: new VertexLayoutDescription[] { vertexLayout },
                 shaders: shaders),
-            Outputs = target.OutputDescription,
+            Outputs = outputs,
             ResourceBindingModel = ResourceBindingModel.Improved
         };
 

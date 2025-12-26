@@ -421,6 +421,41 @@ public static class AssetCache
             SaveRegistry();
         }
     }
+
+    public static void UpdateMeshMaterial(string hash, string materialPath)
+    {
+        var registry = LoadRegistry();
+        lock (_lock)
+        {
+            if (registry.TryGetValue(hash, out var entry) && entry.Type == AssetType.Mesh)
+            {
+                var meta = entry.GetMetadata<MeshCacheMetadata>() ?? new MeshCacheMetadata();
+                meta.MaterialPath = materialPath;
+                entry.Metadata = meta;
+                SaveRegistry();
+            }
+        }
+    }
+
+    public static bool TryGetMeshMetadata(string hash, out MeshCacheMetadata metadata)
+    {
+        var registry = LoadRegistry();
+        lock (_lock)
+        {
+            if (registry.TryGetValue(hash, out var entry) && entry.Type == AssetType.Mesh)
+            {
+                var meta = entry.GetMetadata<MeshCacheMetadata>();
+                if (meta != null)
+                {
+                    metadata = meta;
+                    return true;
+                }
+            }
+        }
+
+        metadata = null!;
+        return false;
+    }
 }
 
 public enum AssetType
@@ -434,6 +469,13 @@ public class CacheEntry
     public AssetType Type { get; set; }
     public string Path { get; set; } = string.Empty;
     public object? Metadata { get; set; }
+
+    public T? GetMetadata<T>() where T : class
+    {
+        if (Metadata is T t) return t;
+        if (Metadata is JsonElement je) return je.Deserialize<T>();
+        return null;
+    }
 }
 
 public class MeshCacheMetadata
@@ -441,6 +483,7 @@ public class MeshCacheMetadata
     public int VertexCount { get; set; }
     public int IndexCount { get; set; }
     public int MaterialIndex { get; set; }
+    public string? MaterialPath { get; set; }
 }
 
 public class TextureCacheMetadata

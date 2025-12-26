@@ -8,7 +8,8 @@ public enum LightType
 {
     Point = 0,
     Directional = 1,
-    Spot = 2
+    Spot = 2,
+    Ortho = 3
 }
 
 [StructLayout(LayoutKind.Sequential)]

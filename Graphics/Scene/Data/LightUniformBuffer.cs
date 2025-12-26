@@ -21,6 +21,8 @@ public class LightUniformBuffer : IDisposable
     private ResourceLayout _paramLayout;
     private ResourceSet _paramResourceSet;
     private int _lastLightCount = -1;
+    
+    public event Action? BufferResized;
 
     public LightUniformBuffer(GraphicsDevice gd, int initialCapacity = 1024)
     {
@@ -90,6 +92,8 @@ public class LightUniformBuffer : IDisposable
             // Recreate resource set
             _resourceSet.Dispose();
             _resourceSet = _gd.ResourceFactory.CreateResourceSet(new ResourceSetDescription(_layout, _buffer));
+            
+            BufferResized?.Invoke();
         }
 
         _gd.UpdateBuffer(_buffer, 0, _lights.ToArray());

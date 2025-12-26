@@ -9,6 +9,7 @@ using ImGuizmoNET;
 using ImPlotNET;
 using Veldrid;
 using Veldrid.Sdl2;
+using Whisperleaf.Graphics;
 using Whisperleaf.AssetPipeline;
 using Whisperleaf.AssetPipeline.Cache;
 using Whisperleaf.AssetPipeline.Scene;
@@ -62,8 +63,11 @@ public class EditorManager : IDisposable {
     public bool SnapEnabled { get; set; }
     public float SnapValue { get; set; } = 0.5f;
     
-    public EditorManager(GraphicsDevice gd, Sdl2Window window) {
+    private readonly Renderer _renderer;
+
+    public EditorManager(GraphicsDevice gd, Sdl2Window window, Renderer renderer) {
         _gd = gd;
+        _renderer = renderer;
         
         // Ensure cache is up to date
         AssetCache.RebuildRegistry();
@@ -83,7 +87,8 @@ public class EditorManager : IDisposable {
         _statsWindow = new StatsWindow();
         _importWizard = new ImportWizardWindow();
         _fileDialog = new FileDialogWindow();
-        _materialEditor = new MaterialEditorWindow(_thumbnailGenerator);
+        _materialEditor = new MaterialEditorWindow(gd, renderer, _thumbnailGenerator);
+        _materialEditor.SetBindingCallback(GetTextureBinding);
 
         _windows.Add(_assetBrowser);
         _windows.Add(_sceneOutliner);
@@ -104,6 +109,65 @@ public class EditorManager : IDisposable {
             _assetBrowser.NavigateTo(path);
             // Ensure Asset Browser is open/focused?
             _assetBrowser.IsOpen = true;
+        };
+        
+        _assetBrowser.OnImportRequested += targetDir =>
+        {
+            _fileDialog.Open("Import Asset", new[] { ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".gltf", ".glb" }, null, sourcePath =>
+            {
+                if (File.Exists(sourcePath))
+                {
+                    string destPath = Path.Combine(targetDir, Path.GetFileName(sourcePath));
+                    try 
+                    {
+                        File.Copy(sourcePath, destPath, true);
+                        
+                        // If Texture, process it to .wltex?
+                        // Or let the user do it?
+                        // User said "import textures using a generalised import dialogue".
+                        // Usually implies processing.
+                        // Let's check extension.
+                        string ext = Path.GetExtension(sourcePath).ToLowerInvariant();
+                        if (ext is ".png" or ".jpg" or ".jpeg" or ".tga" or ".bmp")
+                        {
+                            // Convert to .wltex
+                            // We need a way to invoke cached texture uploader or converter.
+                            // CachedModelLoader.ProcessTexture is private.
+                            // But WlTexFormat is public.
+                            // We can load ImageSharp, WlTexFormat.Write.
+                            
+                            // Let's allow raw copy for now, but also generating .wltex alongside would be cool.
+                            // Actually, AssetCache registers textures by hash.
+                            // If we just have the file, we can invoke AssetCache.RegisterExisting?
+                            // But that registers it into the cache DB, not necessarily creating a .wltex in the folder.
+                            
+                            // Better: Let's create a .wltex for it immediately so it shows up as an asset.
+                            try 
+                            {
+                                using var img = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(destPath);
+                                string hash = WlTexFormat.ComputeHash(img);
+                                string wltexPath = Path.ChangeExtension(destPath, ".wltex");
+                                
+                                // Default to BaseColor or just Unknown?
+                                WlTexFormat.Write(wltexPath, img, TextureType.BaseColor, hash);
+                                File.Delete(destPath); // Remove original? Or keep?
+                                // Usually we import TO the project format.
+                                // Let's keep original for reference? No, cleaner to replace.
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[Editor] Failed to convert texture: {ex.Message}");
+                            }
+                        }
+                        
+                        _assetBrowser.NavigateTo(targetDir); // Trigger refresh
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Editor] Import copy failed: {ex.Message}");
+                    }
+                }
+            });
         };
         
         _importWizard.OnImportComplete += OnImportComplete;
@@ -190,6 +254,7 @@ public class EditorManager : IDisposable {
     public void Update(float deltaTime, InputSnapshot snapshot) {
         _imguiController.Update(deltaTime, snapshot);
         _thumbnailGenerator.Update();
+        _materialEditor.Viewport.Update(deltaTime);
         
         // Shortcuts
         if (InputManager.IsKeyDown(Key.ControlLeft) || InputManager.IsKeyDown(Key.ControlRight))
@@ -434,6 +499,13 @@ public class EditorManager : IDisposable {
              
              // Restore absolute index for saving/inspector
              node.Mesh.MaterialIndex = newMatIndex;
+
+             // Select the new node and open its material
+             _inspector.SetSelectedNode(node);
+             if (!string.IsNullOrEmpty(matRef.AssetPath))
+             {
+                 _materialEditor.OpenMaterial(matRef.AssetPath);
+             }
         }
         catch (Exception ex)
         {

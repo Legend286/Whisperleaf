@@ -72,19 +72,25 @@ public class ViewportWindow : EditorWindow
             // Drag Drop Target
             if (ImGui.BeginDragDropTarget())
             {
-                var payload = ImGui.AcceptDragDropPayload("ASSET_BROWSER_ITEM");
-                unsafe
-                {
-                    if (payload.NativePtr != null)
+                unsafe {
+                    var payload = ImGui.AcceptDragDropPayload("MODEL_ASSET");
+                    if (payload.NativePtr == null) {
+                        payload = ImGui.AcceptDragDropPayload("ASSET_BROWSER_ITEM");
+                    }
+
+                    unsafe
                     {
-                        string path = DragDropPayload.CurrentAssetPath;
-                        if (!string.IsNullOrEmpty(path))
+                        if (payload.NativePtr != null)
                         {
-                            _renderer.InstantiateAsset(path);
+                            string path = DragDropPayload.CurrentAssetPath;
+                            if (!string.IsNullOrEmpty(path))
+                            {
+                                _renderer.InstantiateAsset(path);
+                            }
                         }
                     }
+                    ImGui.EndDragDropTarget();
                 }
-                ImGui.EndDragDropTarget();
             }
 
             _renderer.DrawGizmo();

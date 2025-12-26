@@ -1,38 +1,97 @@
 using System.Numerics;
 using ImGuiNET;
+using Veldrid;
 using Whisperleaf.AssetPipeline;
+using Whisperleaf.Graphics;
 using Whisperleaf.Platform;
 
 using Whisperleaf.AssetPipeline.Cache;
 
 namespace Whisperleaf.Editor.Windows;
 
-public class MaterialEditorWindow : EditorWindow
+public class MaterialEditorWindow : EditorWindow, IDisposable
 {
     private readonly ThumbnailGenerator _thumbs;
+    private readonly MaterialPreviewRenderer _previewRenderer;
+    private readonly GraphicsDevice _gd; // To get ImGuiBinding via EditorManager (passed in constructor?)
+    // Actually we need EditorManager to get texture binding.
+    // Or we can just access ImGuiController if we had it.
+    // EditorManager is not static.
+    // We can pass a callback "GetTextureBinding" to the window.
+    
+    // Simplest: Pass EditorManager to MaterialEditorWindow? Or just the binding callback.
+    // But we already have _thumbnailGenerator which holds EditorManager?
+    // Let's check ThumbnailGenerator. It has 'private EditorManager _editor'.
+    // We can't access it.
+    
+    // Let's modify MaterialEditorWindow to take a Func for binding.
+    private Func<Texture, IntPtr> _getBinding;
+
     private MaterialAsset _currentMaterial;
     private string? _currentPath;
     private bool _dirty;
     
+    private bool _showSaveAs;
+    private string _saveAsName = "NewMaterial";
+    
     public event Action<string, MaterialAsset>? MaterialChanged;
     public event Action<string>? RevealRequested;
+    
+    public MaterialPreviewRenderer PreviewRenderer => _previewRenderer;
+    public MaterialViewportWindow Viewport { get; private set; }
 
-    public MaterialEditorWindow(ThumbnailGenerator thumbs)
+    public MaterialEditorWindow(GraphicsDevice gd, Renderer renderer, ThumbnailGenerator thumbs)
     {
         Title = "Material Editor";
         _thumbs = thumbs;
+        _gd = gd;
         IsOpen = false; // Closed by default
         _currentMaterial = new MaterialAsset();
+        _previewRenderer = new MaterialPreviewRenderer(gd, renderer);
+        Viewport = new MaterialViewportWindow(_previewRenderer, Window.Instance);
+        
+        Viewport.OnMeshDropped += meshPath =>
+        {
+            try
+            {
+                var data = WlMeshFormat.Read(meshPath, out string hash);
+                Console.WriteLine($"[MaterialEditor] Loading mesh: {meshPath} (Hash: {hash})");
+                _previewRenderer.SetPreviewMesh(meshPath);
+
+                // Find material in registry
+                if (AssetCache.TryGetMeshMetadata(hash, out var meta) && !string.IsNullOrEmpty(meta.MaterialPath))
+                {
+                    Console.WriteLine($"[MaterialEditor] Found associated material in registry: {meta.MaterialPath}");
+                    OpenMaterial(meta.MaterialPath);
+                }
+                else
+                {
+                    Console.WriteLine("[MaterialEditor] No associated material found in registry for this mesh.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MaterialEditor] Error loading mesh on drop: {ex.Message}");
+            }
+        };
+    }
+    
+    public void SetBindingCallback(Func<Texture, IntPtr> callback)
+    {
+        _getBinding = callback;
+        Viewport.SetBindingCallback(callback);
     }
 
     public void OpenMaterial(string path)
     {
         try
         {
+            Console.WriteLine($"[MaterialEditor] Opening material: {path}");
             _currentMaterial = MaterialAsset.Load(path);
             _currentPath = path;
             _dirty = false;
             IsOpen = true;
+            _previewRenderer.UpdateMaterial(_currentMaterial);
         }
         catch (Exception ex)
         {
@@ -82,7 +141,54 @@ public class MaterialEditorWindow : EditorWindow
     protected override void OnDraw()
     {
         DrawMenuBar();
+        
+        if (ImGui.BeginTable("MatEditorLayout", 2, ImGuiTableFlags.Resizable))
+        {
+            ImGui.TableNextColumn();
+            DrawSettings();
+            
+            ImGui.TableNextColumn();
+            Viewport.DrawContent();
+            
+            ImGui.EndTable();
+        }
+        
+        if (_showSaveAs)
+        {
+            ImGui.OpenPopup("Save Material As");
+            _showSaveAs = false; // Reset trigger, popup handles state
+        }
 
+        if (ImGui.BeginPopupModal("Save Material As", ref _showSaveAs, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.InputText("Name", ref _saveAsName, 64);
+            
+            if (ImGui.Button("Save", new Vector2(120, 0)))
+            {
+                string dir = string.IsNullOrEmpty(_currentPath) ? Path.Combine("Resources", "Materials") : Path.GetDirectoryName(_currentPath)!;
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                
+                string filename = _saveAsName.EndsWith(".wlmat") ? _saveAsName : _saveAsName + ".wlmat";
+                string path = Path.Combine(dir, filename);
+                
+                _currentMaterial.Name = _saveAsName; // Sync name
+                _currentMaterial.Save(path);
+                _currentPath = path;
+                _dirty = false;
+                
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel", new Vector2(120, 0)))
+            {
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
+    }
+
+    private void DrawSettings()
+    {
         if (_currentMaterial == null) return;
         
         bool changed = false;
@@ -176,9 +282,15 @@ public class MaterialEditorWindow : EditorWindow
         if (changed)
         {
             _dirty = true;
+            _previewRenderer.UpdateMaterial(_currentMaterial); // Live update
             if (_currentPath != null)
                 MaterialChanged?.Invoke(_currentPath, _currentMaterial);
         }
+    }
+    
+    public void Dispose()
+    {
+        _previewRenderer.Dispose();
     }
 
     private string? DrawTextureSlot(string label, string? path)
@@ -193,19 +305,18 @@ public class MaterialEditorWindow : EditorWindow
         }
         
         Vector2 size = new Vector2(64, 64);
-        bool clicked = false;
         
         ImGui.BeginGroup(); // Wrap in group for robust drag target
         if (texHandle != IntPtr.Zero)
         {
             // Image Button
-            if (ImGui.ImageButton(label + "_btn", texHandle, size)) clicked = true;
+            ImGui.ImageButton(label + "_btn", texHandle, size);
         }
         else
         {
             // Placeholder Button
             string btnText = string.IsNullOrEmpty(path) ? "None" : "Loading...";
-            if (ImGui.Button(btnText, size)) clicked = true;
+            ImGui.Button(btnText, size);
         }
         ImGui.EndGroup();
 
@@ -214,14 +325,17 @@ public class MaterialEditorWindow : EditorWindow
         {
             unsafe {
                 var payload = ImGui.AcceptDragDropPayload("TEXTURE_ASSET");
-                if (payload.NativePtr != null && payload.DataSize > 0)
+                if (payload.NativePtr != null)
                 {
-                    string droppedPath = System.Text.Encoding.UTF8.GetString((byte*)payload.Data, payload.DataSize);
-                    string ext = Path.GetExtension(droppedPath).ToLower();
-                    if (ext == ".wltex" || ext == ".png" || ext == ".jpg" || ext == ".tga")
+                    string droppedPath = DragDropPayload.CurrentAssetPath;
+                    if (!string.IsNullOrEmpty(droppedPath))
                     {
-                        path = droppedPath;
-                        _dirty = true;
+                        string ext = Path.GetExtension(droppedPath).ToLower();
+                        if (ext == ".wltex" || ext == ".png" || ext == ".jpg" || ext == ".tga")
+                        {
+                            path = droppedPath;
+                            _dirty = true;
+                        }
                     }
                 }
             }
@@ -273,13 +387,11 @@ public class MaterialEditorWindow : EditorWindow
                     SaveMaterial();
                 }
                 
-                // Hacky "Save As" input
-                ImGui.Separator();
-                ImGui.Text("Save As (Resources/Materials/):");
-                // We can't do a text input inside a menu item easily without closing it
-                // So we'll trigger a popup or just rely on a separate window section for "Save As"
-                // For now, let's keep it simple: If you click Save As, we print to console instruction
-                // or we use a static modal.
+                if (ImGui.MenuItem("Save As..."))
+                {
+                    _saveAsName = string.IsNullOrEmpty(_currentPath) ? "NewMaterial" : Path.GetFileNameWithoutExtension(_currentPath);
+                    _showSaveAs = true;
+                }
                 
                 ImGui.EndMenu();
             }

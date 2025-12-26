@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Numerics;
 using Veldrid;
 using Veldrid.ImageSharp;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace Whisperleaf.AssetPipeline
 {
@@ -11,7 +13,7 @@ namespace Whisperleaf.AssetPipeline
 
         // Factors
         public Vector4 BaseColorFactor = Vector4.One;
-        public float MetallicFactor = 1f;
+        public float MetallicFactor = 0f;
         public float RoughnessFactor = 1f;
         public Vector3 EmissiveFactor = Vector3.Zero;
         
@@ -54,6 +56,14 @@ namespace Whisperleaf.AssetPipeline
 
         // Flag to detect packed RMA textures
         public bool UsePackedRMA;
+        
+        // Temp images for async loading
+        public Image<Rgba32>? BaseColorImage;
+        public Image<Rgba32>? NormalImage;
+        public Image<Rgba32>? EmissiveImage;
+        public Image<Rgba32>? MetallicImage;
+        public Image<Rgba32>? RoughnessImage;
+        public Image<Rgba32>? OcclusionImage;
 
         public void Dispose()
         {
@@ -92,6 +102,13 @@ namespace Whisperleaf.AssetPipeline
             DisposeTexture(NormalRef);
             DisposeTexture(OcclusionRef);
             DisposeTexture(EmissiveRef);
+            
+            BaseColorImage?.Dispose();
+            NormalImage?.Dispose();
+            EmissiveImage?.Dispose();
+            MetallicImage?.Dispose();
+            RoughnessImage?.Dispose();
+            OcclusionImage?.Dispose();
         }
     }
 }

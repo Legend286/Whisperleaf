@@ -223,18 +223,26 @@ void main() {
                     visible = true;
                 }
             }
-            else if (type == 2) { // Spot (Ray Cone Test)
+            else if (type == 2) { // Spot
                 float range = light.Position.w;
-                float cosAngle = cos(light.Params.y);
+                float outerAngle = light.Params.y;
+                float cosAngle = cos(outerAngle);
                 
                 vec3 coneApex = viewPos;
                 vec3 coneAxis = normalize(mat3(View) * light.Direction.xyz);
                 
-                if (TestRayCone(rayOrigin, dirTL, coneApex, coneAxis, cosAngle, range) ||
-                    TestRayCone(rayOrigin, dirTR, coneApex, coneAxis, cosAngle, range) ||
-                    TestRayCone(rayOrigin, dirBL, coneApex, coneAxis, cosAngle, range) ||
-                    TestRayCone(rayOrigin, dirBR, coneApex, coneAxis, cosAngle, range) ||
-                    TestRayCone(rayOrigin, dirC, coneApex, coneAxis, cosAngle, range)) {
+                // Better cone culling: Test if sphere enclosing the cone intersects the frustum rays
+                // For a spot light, the sphere radius that covers the cone is approximately the range.
+                // However, the sphere center is shifted from apex along the axis.
+                float sphereRadius = range / (2.0 * cosAngle);
+                if (outerAngle > 1.5) sphereRadius = range; // Handle very wide angles
+                vec3 sphereCenter = coneApex + coneAxis * (range * 0.5);
+
+                if (TestRaySphere(rayOrigin, dirTL, sphereCenter, sphereRadius) ||
+                    TestRaySphere(rayOrigin, dirTR, sphereCenter, sphereRadius) ||
+                    TestRaySphere(rayOrigin, dirBL, sphereCenter, sphereRadius) ||
+                    TestRaySphere(rayOrigin, dirBR, sphereCenter, sphereRadius) ||
+                    TestRaySphere(rayOrigin, dirC, sphereCenter, sphereRadius)) {
                     visible = true;
                 }
             }

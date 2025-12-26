@@ -1,0 +1,8 @@
+Model Information:
+* title:	Dumpster - Game Ready
+* source:	https://sketchfab.com/3d-models/dumpster-game-ready-820badfa51de4e5cb7a112ef3df42fe8
+* author:	Noah (https://sketchfab.com/rarerex3d)
+
+Model License:
+* license type:	SKETCHFAB Standard (https://sketchfab.com/licenses)
+* requirements:	Under basic restrictions, use worldwide, on all types of media, commercially or not, and in all types of derivative works

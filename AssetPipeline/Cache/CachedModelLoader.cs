@@ -135,6 +135,22 @@ public static class CachedModelLoader
             cachedMaterials[i] = mat;
         });
 
+        // Update registry with material associations
+        for (int i = 0; i < cachedMeshes.Count; i++)
+        {
+            var mesh = cachedMeshes[i];
+            var meshHash = WlMeshFormat.ComputeHash(mesh);
+            int matIdx = mesh.MaterialIndex;
+            if (matIdx >= 0 && matIdx < cachedMaterials.Count)
+            {
+                var mat = cachedMaterials[matIdx];
+                if (!string.IsNullOrEmpty(mat.AssetPath))
+                {
+                    AssetCache.UpdateMeshMaterial(meshHash, mat.AssetPath);
+                }
+            }
+        }
+
         return (cachedMeshes, cachedMaterials, scene);
     }
 

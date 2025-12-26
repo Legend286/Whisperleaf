@@ -136,7 +136,7 @@ public class CsmPass : IDisposable
         _mdiPipeline = _factory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
             BlendStateDescription.SingleDisabled,
             DepthStencilStateDescription.DepthOnlyLessEqual,
-            new RasterizerStateDescription(FaceCullMode.Front, PolygonFillMode.Solid, FrontFace.Clockwise, true, false),
+            new RasterizerStateDescription(FaceCullMode.Front, PolygonFillMode.Solid, FrontFace.CounterClockwise, true, false),
             PrimitiveTopology.TriangleList,
             new ShaderSetDescription(new[] { vertexLayout }, new[] { mdiVs, shadowFs }),
             new[] { _vpLayout, _modelLayout, _visibleInstancesLayout },

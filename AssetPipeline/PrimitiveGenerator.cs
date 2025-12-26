@@ -145,12 +145,12 @@ public static class PrimitiveGenerator
                 uint nextJ = (uint)(j + 1);
 
                 indices.Add((uint)(i * stride + j));
-                indices.Add((uint)(i * stride + nextJ));
                 indices.Add((uint)(nextI * stride + j));
+                indices.Add((uint)(i * stride + nextJ));
 
                 indices.Add((uint)(i * stride + nextJ));
-                indices.Add((uint)(nextI * stride + nextJ));
                 indices.Add((uint)(nextI * stride + j));
+                indices.Add((uint)(nextI * stride + nextJ));
             }
         }
 
@@ -161,6 +161,33 @@ public static class PrimitiveGenerator
             Indices = indices.ToArray(),
             AABBMin = new Vector3(-radius),
             AABBMax = new Vector3(radius),
+            WorldMatrix = Matrix4x4.Identity
+        };
+    }
+
+    public static MeshData CreatePlane(float width, float depth)
+    {
+        float w2 = width * 0.5f;
+        float d2 = depth * 0.5f;
+
+        var vertices = new float[]
+        {
+            // Pos(3), Norm(3), Tan(4), UV(2)
+            -w2, 0, -d2,  0, 1, 0,  1, 0, 0, 1,  0, 0,
+             w2, 0, -d2,  0, 1, 0,  1, 0, 0, 1,  1, 0,
+             w2, 0,  d2,  0, 1, 0,  1, 0, 0, 1,  1, 1,
+            -w2, 0,  d2,  0, 1, 0,  1, 0, 0, 1,  0, 1
+        };
+
+        var indices = new uint[] { 0, 3, 2, 0, 2, 1 };
+
+        return new MeshData
+        {
+            Name = "Plane",
+            Vertices = vertices,
+            Indices = indices,
+            AABBMin = new Vector3(-w2, 0, -d2),
+            AABBMax = new Vector3(w2, 0, d2),
             WorldMatrix = Matrix4x4.Identity
         };
     }

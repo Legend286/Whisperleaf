@@ -33,7 +33,7 @@ public class TrianglePass : IRenderPass
 
         _pipeline = PipelineFactory.CreatePipeline(gd, "Graphics/Shaders/triangle.vert",
             "Graphics/Shaders/triangle.frag",
-            vertexLayout, gd.MainSwapchain.Framebuffer);
+            vertexLayout, gd.MainSwapchain.Framebuffer.OutputDescription);
     }
 
     public void Render(GraphicsDevice gd, CommandList cl, Camera? camera, Vector2 screenSize, int debugMode)

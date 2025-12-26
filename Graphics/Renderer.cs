@@ -22,16 +22,22 @@ public class Renderer
 {
     private readonly Window _window;
     private readonly CommandList _cl;
+    private readonly CommandList _shadowCL;
+    private readonly CommandList _csmCL;
+    private readonly CommandList _depthCL;
     private readonly List<IRenderPass> _passes = new();
     private readonly EditorManager _editorManager;
     private readonly GltfPass _scenePass;
     private readonly DepthPass _depthPass;
     private readonly ImmediateRenderer _immediateRenderer;
-    private readonly ShadowAtlas _shadowAtlas;
+    public ShadowAtlas ShadowAtlas { get; }
     private readonly ShadowPass _shadowPass;
-    private readonly CsmAtlas _csmAtlas;
+    public CsmAtlas CsmAtlas { get; }
     private readonly CsmPass _csmPass;
     private readonly CsmUniformBuffer _csmUniformBuffer;
+    public ResourceLayout CsmLayout => _csmUniformBuffer.Layout;
+    public ResourceSet CsmResourceSet => _csmUniformBuffer.ResourceSet;
+    private readonly SkyboxPass _skyboxPass;
 
     // Game View Resources
     private Framebuffer _viewFramebuffer;
@@ -62,30 +68,33 @@ public class Renderer
     {
         _window = window;
         _cl = _window.graphicsDevice.ResourceFactory.CreateCommandList();
+        _shadowCL = _window.graphicsDevice.ResourceFactory.CreateCommandList();
+        _csmCL = _window.graphicsDevice.ResourceFactory.CreateCommandList();
+        _depthCL = _window.graphicsDevice.ResourceFactory.CreateCommandList();
         PbrLayout.Initialize(_window.graphicsDevice);
         
         Physics = new PhysicsThread();
         
-        _editorManager = new EditorManager(_window.graphicsDevice, _window.SdlWindow);
+        ShadowAtlas = new ShadowAtlas(_window.graphicsDevice);
+                CsmAtlas = new CsmAtlas(_window.graphicsDevice);
+                _csmUniformBuffer = new CsmUniformBuffer(_window.graphicsDevice, CsmAtlas.TextureView, CsmAtlas.ShadowSampler);
+        
+                _scenePass = new GltfPass(_window.graphicsDevice, ShadowAtlas.ResourceLayout, _csmUniformBuffer.Layout, _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription);
+                _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;        _scenePass.ShadowAtlas = ShadowAtlas;
+        _shadowPass = new ShadowPass(_window.graphicsDevice);
+        _csmPass = new CsmPass(_window.graphicsDevice);
+        _skyboxPass = new SkyboxPass(_window.graphicsDevice, _scenePass.CameraBuffer, _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription);
+
+        _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice);
+
+        _passes.Add(_scenePass);
+        
+        _editorManager = new EditorManager(_window.graphicsDevice, _window.SdlWindow, this);
         _editorManager.SceneNodeSelected += OnSceneNodeSelected;
         _editorManager.GizmoOperationChanged += operation => _gizmoOperation = operation;
         _editorManager.ResolveMaterialPath = idx => _scenePass.GetMaterial(idx)?.AssetPath;
         _editorManager.MaterialUpdated += (path, asset) => _scenePass.UpdateMaterial(path, asset);
         _gizmoOperation = _editorManager.GizmoOperation;
-
-        _shadowAtlas = new ShadowAtlas(_window.graphicsDevice);
-        _csmAtlas = new CsmAtlas(_window.graphicsDevice);
-        _csmUniformBuffer = new CsmUniformBuffer(_window.graphicsDevice, _csmAtlas.TextureView, _csmAtlas.ShadowSampler);
-
-        _scenePass = new GltfPass(_window.graphicsDevice, _shadowAtlas.ResourceLayout, _csmUniformBuffer.Layout);
-        _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
-        _scenePass.ShadowAtlas = _shadowAtlas;
-        _shadowPass = new ShadowPass(_window.graphicsDevice);
-        _csmPass = new CsmPass(_window.graphicsDevice);
-
-        _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice);
-
-        _passes.Add(_scenePass);
 
         _editorManager.SceneRequested += OnSceneRequested;
         _window.WindowResized += _editorManager.WindowResized;
@@ -204,7 +213,7 @@ public class Renderer
                 _scenePass.Update(camera);
 
                 var lights = new List<SceneNode>(_scenePass.VisibleLights);
-                _shadowAtlas.UpdateAllocations(lights, camera, _scenePass, EnableShadows);
+                ShadowAtlas.UpdateAllocations(lights, camera, _scenePass, EnableShadows);
 
                 // Update CSM for sunlight
                 Vector3 sunDir = new Vector3(0.2f, -1.0f, 0.3f); // Default
@@ -224,61 +233,92 @@ public class Renderer
 
                 if (sunFound)
                 {
-                    _csmAtlas.UpdateCascades(camera, sunDir);
-                    _csmUniformBuffer.Update(_window.graphicsDevice, _csmAtlas);
-                }
-                else
-                {
-                    // If no sun or shadows disabled, we should probably clear the cascades or disable CSM set binding
-                    // For now, sunFound = false will skip CSM rendering below.
+                    CsmAtlas.UpdateCascades(camera, sunDir);
+                    _csmUniformBuffer.Update(_window.graphicsDevice, CsmAtlas);
+                    _skyboxPass.UpdateSun(-sunDir); // Skybox expects Direction TO Sun, Light is Direction FROM Sun usually. 
+                    // LightUniform is usually "Direction the light travels" (e.g. down). 
+                    // sunDir calc was: TransformNormal(0,0,-1) -> Forward vector of node.
+                    // If node looks at earth, sunDir is down. 
+                    // Nishita shader expects "SunDirection" as vector TO sun.
+                    // So if sunDir is light direction, we negate.
                 }
                 _sunActiveThisFrame = sunFound;
             }
 
-            _cl.Begin();
+            // Update Transforms for all passes (Shadows/Main)
+            _scenePass.UpdateModelBuffer();
 
+            // Parallel Render Passes (Shadows, CSM, Depth) - RECORDING
+            Parallel.Invoke(
+                () =>
+                {
+                    _shadowCL.Begin();
+                    // Clear Shadow Maps
+                    for (int i = 0; i < ShadowAtlas.GetLayerCount(); i++)
+                    {
+                        _shadowCL.SetFramebuffer(ShadowAtlas.GetFramebuffer(i));
+                        _shadowCL.ClearDepthStencil(1.0f);
+                    }
+                    if (camera != null)
+                    {
+                        _shadowPass.Render(_window.graphicsDevice, _shadowCL, ShadowAtlas, _scenePass);
+                    }
+                    _shadowCL.End();
+                },
+                () =>
+                {
+                    _csmCL.Begin();
+                    if (camera != null && _sunActiveThisFrame)
+                    {
+                        _csmPass.Render(_csmCL, CsmAtlas, _scenePass);
+                    }
+                    _csmCL.End();
+                },
+                () =>
+                {
+                    _depthCL.Begin();
+                    _depthCL.SetFramebuffer(_viewFramebuffer);
+                    _depthCL.ClearDepthStencil(1.0f);
+                    if (camera != null)
+                    {
+                        _depthPass.Render(_depthCL, _scenePass, camera);
+                    }
+                    _depthCL.End();
+                }
+            );
+            
+            // 1. Submit parallel passes FIRST. Depth must be on GPU before main pass.
+            _window.graphicsDevice.SubmitCommands(_shadowCL);
+            if (_sunActiveThisFrame) _window.graphicsDevice.SubmitCommands(_csmCL);
+            _window.graphicsDevice.SubmitCommands(_depthCL);
+
+            // 2. Now record and submit the "Prepare" work (Uniforms, Light Culling)
+            _cl.Begin();
             if (camera != null)
             {
                 _scenePass.PrepareRender(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
             }
-
             _cl.End();
             _window.graphicsDevice.SubmitCommands(_cl);
 
+            // 3. Finally record the main pass
             _cl.Begin();
-
-            // Clear Shadow Maps
-            for (int i = 0; i < _shadowAtlas.GetLayerCount(); i++)
-            {
-                _cl.SetFramebuffer(_shadowAtlas.GetFramebuffer(i));
-                _cl.ClearDepthStencil(1.0f);
-            }
-
-            // Render Shadows
-            if (camera != null)
-            {
-                _shadowPass.Render(_window.graphicsDevice, _cl, _shadowAtlas, _scenePass);
-                if (_sunActiveThisFrame)
-                {
-                    _csmPass.Render(_cl, _csmAtlas, _scenePass);
-                }
-            }
 
             // Main Pass - Render to Game View Framebuffer
             _cl.SetFramebuffer(_viewFramebuffer);
             _cl.ClearColorTarget(0, RgbaFloat.Black);
-            _cl.ClearDepthStencil(1.0f);
-
-            if (camera != null)
-            {
-                _depthPass.Render(_cl, _scenePass, camera);
-            }
+            // DO NOT clear depth here, DepthPass did it
 
             _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
 
             foreach (var pass in _passes)
             {
                 pass.Render(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
+            }
+            
+            if (camera != null)
+            {
+                _skyboxPass.Render(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
             }
 
             var stats = new Editor.RenderStats
@@ -388,10 +428,14 @@ public class Renderer
         _depthPass.Dispose();
         _shadowPass.Dispose();
         _csmPass.Dispose();
-        _csmAtlas.Dispose();
+        CsmAtlas.Dispose();
         _csmUniformBuffer.Dispose();
-        _shadowAtlas.Dispose();
+        ShadowAtlas.Dispose();
+        _skyboxPass.Dispose();
         _immediateRenderer.Dispose();
         _editorManager.Dispose();
+        _shadowCL.Dispose();
+        _csmCL.Dispose();
+        _depthCL.Dispose();
     }
 }
