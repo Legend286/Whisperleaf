@@ -34,7 +34,7 @@ layout(set = 1, binding = 0) uniform SkyParams {
 };
 
 // Constants
-const int NUM_SAMPLES = 8;
+const int NUM_SAMPLES = 16;
 const float PI = 3.14159265359;
 
 // Ray-Sphere intersection
@@ -158,6 +158,20 @@ void main() {
     
     vec3 color = SunIntensity * (totalRayleigh * RayleighScattering * phaseR + totalMie * MieScattering * phaseM);
     
+    // 3. Physically Correct Sun Disk with Atmospheric Lensing
+    // Increased base size for visual impact (approx 1.7 degrees diameter)
+    float sunAltitude = SunDirection.y;
+    float lensing = 1.0 + 0.5 * clamp(1.0 - abs(sunAltitude) * 2.0, 0.0, 1.0);
+    float sunRadiusRad = 0.02 * lensing; 
+    float sunCosThreshold = cos(sunRadiusRad);
+
+    if (mu > sunCosThreshold && hitPlanet.x < 0.0) {
+        vec3 sunExtinction = exp(-(RayleighScattering * opticalDepthRayleigh + MieScattering * opticalDepthMie));
+        // Smoother edge for a natural look
+        float edge = smoothstep(sunCosThreshold, sunCosThreshold + 0.0002, mu);
+        color += sunExtinction * 1000.0 * edge; 
+    }
+
     // Tone Mapping (Reinhard)
     color = color / (color + vec3(1.0));
     color = pow(color, vec3(1.0/2.2)); // Gamma

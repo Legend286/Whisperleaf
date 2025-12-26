@@ -122,11 +122,12 @@ namespace Whisperleaf.Graphics.Scene.Data
             uint neededBytes = (uint)(capacity * _stride);
             if (_buffer.SizeInBytes < neededBytes)
             {
+                _gd.WaitForIdle();
                 uint newSize = Math.Max(neededBytes, (uint)(_buffer.SizeInBytes * 2));
                 
-                // Defer disposal of old resources as they might be in use by a pending command buffer
-                _staleResources.Add(_buffer);
-                _staleResources.Add(_resourceSet);
+                // Dispose immediately after idle
+                _buffer.Dispose();
+                _resourceSet.Dispose();
                 
                 _buffer = _gd.ResourceFactory.CreateBuffer(new BufferDescription(
                     newSize, 

@@ -713,6 +713,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     public void LoadScene(SceneAsset sceneAsset, bool additive = false)
     {
+        _gd.WaitForIdle();
         if (!additive) ClearResources();
 
         // 1. Prepare Materials (Synchronous)

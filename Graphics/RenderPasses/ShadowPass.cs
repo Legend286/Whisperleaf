@@ -199,6 +199,7 @@ public class ShadowPass : IDisposable {
     }
 
     private void RecreateBuffers() {
+        _gd.WaitForIdle();
         _batchBuffer?.Dispose();
         _instanceBatchMapBuffer?.Dispose();
         _indirectCommandsBuffer?.Dispose();

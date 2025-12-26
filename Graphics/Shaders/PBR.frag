@@ -108,7 +108,7 @@ float CalcCsm(vec3 worldPos, vec3 N, vec3 L) {
     vec2 texelSize = vec2(1.0 / 4096.0) * filterScale;
     
     // Combine slope bias with a tiny constant to handle flat surfaces
-    float csmBias = 0.000005; // Base tiny bias for opaque (backface casting)
+    float csmBias = 0.000000; // Base tiny bias for opaque (backface casting)
     
     // Non-opaque (Mask/Blend) are double-sided and cast shadows from front-faces too
     if (u_AlphaMode != 0) {
@@ -148,7 +148,7 @@ float CalcShadow(int index, vec3 worldPos, vec3 N, vec3 L, vec3 lightPos, float 
     vec2 uv = info.atlasRect.xy + projCoords.xy * info.atlasRect.z;
     float layer = info.atlasRect.w;
     float currentDepth = projCoords.z;
-    float bias = 0.000005; // Base tiny bias for opaque
+    float bias = 0.00000; // Base tiny bias for opaque
     if (u_AlphaMode != 0) {
         bias = 0.0002; // Small bias for double-sided
     }

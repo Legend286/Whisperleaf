@@ -35,11 +35,15 @@ public class Renderer
     public ResourceLayout CsmLayout => _csmUniformBuffer.Layout;
     public ResourceSet CsmResourceSet => _csmUniformBuffer.ResourceSet;
     private readonly SkyboxPass _skyboxPass;
+    private readonly BloomPass _bloomPass;
 
     // Game View Resources
-    private Framebuffer _viewFramebuffer;
-    private Texture _viewTexture;
-    private Texture _viewDepthTexture;
+    private Framebuffer? _viewFramebuffer;
+    private Framebuffer? _finalViewFramebuffer;
+    private Texture? _viewTexture;
+    private Texture? _finalViewTexture;
+    private TextureView? _viewTextureView;
+    private Texture? _viewDepthTexture;
     private readonly ViewportWindow _viewportWindow;
     public uint ViewportWidth { get; private set; }
     public uint ViewportHeight { get; private set; }
@@ -49,6 +53,12 @@ public class Renderer
     public bool ShowSelectionBounds { get; set; } = true;
     public bool ShowLightHeatmap { get; set; }
     public bool EnableShadows { get; set; } = true;
+
+    // Post Process Params
+    public bool BloomEnabled { get => _bloomPass.Enabled; set => _bloomPass.Enabled = value; }
+    public float BloomThreshold { get => _bloomPass.Threshold; set => _bloomPass.Threshold = value; }
+    public float BloomIntensity { get => _bloomPass.Intensity; set => _bloomPass.Intensity = value; }
+    public float Exposure { get => _bloomPass.Exposure; set => _bloomPass.Exposure = value; }
 
     public SceneNode? SelectedNode => _selectedNode;
     public bool IsManipulating => ImGuizmo.IsUsing();
@@ -61,6 +71,9 @@ public class Renderer
     private OPERATION _gizmoOperation;
     private bool _wasUsingGizmo;
     private bool _sunActiveThisFrame;
+    private bool _resizeRequested;
+    private uint _pendingWidth, _pendingHeight;
+
     public Renderer(Window window)
     {
         _window = window;
@@ -70,16 +83,26 @@ public class Renderer
         Physics = new PhysicsThread();
         
         ShadowAtlas = new ShadowAtlas(_window.graphicsDevice);
-                CsmAtlas = new CsmAtlas(_window.graphicsDevice);
-                _csmUniformBuffer = new CsmUniformBuffer(_window.graphicsDevice, CsmAtlas.TextureView, CsmAtlas.ShadowSampler);
+        CsmAtlas = new CsmAtlas(_window.graphicsDevice);
+        _csmUniformBuffer = new CsmUniformBuffer(_window.graphicsDevice, CsmAtlas.TextureView, CsmAtlas.ShadowSampler);
         
-                _scenePass = new GltfPass(_window.graphicsDevice, ShadowAtlas.ResourceLayout, _csmUniformBuffer.Layout, _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription);
-                _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;        _scenePass.ShadowAtlas = ShadowAtlas;
+        var hdrOutputDesc = new OutputDescription(
+            new OutputAttachmentDescription(PixelFormat.D32_Float_S8_UInt),
+            new OutputAttachmentDescription(PixelFormat.R16_G16_B16_A16_Float));
+
+        var ldrOutputDesc = new OutputDescription(
+            null,
+            new OutputAttachmentDescription(_window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.ColorAttachments[0].Format));
+
+        _scenePass = new GltfPass(_window.graphicsDevice, ShadowAtlas.ResourceLayout, _csmUniformBuffer.Layout, hdrOutputDesc);
+        _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
+        _scenePass.ShadowAtlas = ShadowAtlas;
         _shadowPass = new ShadowPass(_window.graphicsDevice);
         _csmPass = new CsmPass(_window.graphicsDevice);
-        _skyboxPass = new SkyboxPass(_window.graphicsDevice, _scenePass.CameraBuffer, _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription);
+        _skyboxPass = new SkyboxPass(_window.graphicsDevice, _scenePass.CameraBuffer, hdrOutputDesc);
+        _bloomPass = new BloomPass(_window.graphicsDevice, ldrOutputDesc);
 
-        _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice);
+        _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice, hdrOutputDesc);
 
         _passes.Add(_scenePass);
         
@@ -102,9 +125,9 @@ public class Renderer
         if (ViewportWidth == 0) ViewportWidth = 1280;
         if (ViewportHeight == 0) ViewportHeight = 720;
 
-        ResizeViewport(ViewportWidth, ViewportHeight);
+        PerformResize(ViewportWidth, ViewportHeight);
 
-        _depthPass = new DepthPass(_window.graphicsDevice, _viewFramebuffer, _scenePass.CameraBuffer);
+        _depthPass = new DepthPass(_window.graphicsDevice, _viewFramebuffer!, _scenePass.CameraBuffer);
 
         _viewportWindow = new ViewportWindow(this, _window);
         _editorManager.AddWindow(_viewportWindow);
@@ -118,20 +141,37 @@ public class Renderer
 
     public void ResizeViewport(uint width, uint height)
     {
+        _pendingWidth = width;
+        _pendingHeight = height;
+        _resizeRequested = true;
+    }
+
+    private void PerformResize(uint width, uint height)
+    {
         _window.graphicsDevice.WaitForIdle();
         ViewportWidth = width;
         ViewportHeight = height;
 
         _viewTexture?.Dispose();
+        _viewTextureView?.Dispose();
+        _finalViewTexture?.Dispose();
+        _finalViewFramebuffer?.Dispose();
         _viewDepthTexture?.Dispose();
         _viewFramebuffer?.Dispose();
 
         var factory = _window.graphicsDevice.ResourceFactory;
 
         var swapchainFormat = _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.ColorAttachments[0].Format;
-        var depthFormat = _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.DepthAttachment.Value.Format;
+        var depthFormat = PixelFormat.D32_Float_S8_UInt;
 
         _viewTexture = factory.CreateTexture(TextureDescription.Texture2D(
+            width, height, 1, 1,
+            PixelFormat.R16_G16_B16_A16_Float,
+            TextureUsage.RenderTarget | TextureUsage.Sampled));
+        
+        _viewTextureView = factory.CreateTextureView(_viewTexture);
+
+        _finalViewTexture = factory.CreateTexture(TextureDescription.Texture2D(
             width, height, 1, 1,
             swapchainFormat,
             TextureUsage.RenderTarget | TextureUsage.Sampled));
@@ -142,16 +182,15 @@ public class Renderer
             TextureUsage.DepthStencil));
 
         _viewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(_viewDepthTexture, _viewTexture));
+        _finalViewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(null, _finalViewTexture));
 
-        // Recreate DepthPass pipelines for new target if needed, but DepthPass currently doesn't support hot-swapping target easily.
-        // Actually, DepthPass target is _viewFramebuffer. In Veldrid, if the framebuffer is recreated, the pipeline is still compatible if OutputDescription is same.
-        // Swapchain format usually doesn't change on resize.
+        _bloomPass.Resize(width, height);
     }
 
     public IntPtr GetGameViewTextureId()
     {
-        if (_viewTexture == null) return IntPtr.Zero;
-        return _editorManager.GetTextureBinding(_viewTexture);
+        if (_finalViewTexture == null) return IntPtr.Zero;
+        return _editorManager.GetTextureBinding(_finalViewTexture);
     }
 
     public void LoadScene(SceneAsset scene)
@@ -178,6 +217,12 @@ public class Renderer
     {
         while (_window.Exists)
         {
+            if (_resizeRequested)
+            {
+                PerformResize(_pendingWidth, _pendingHeight);
+                _resizeRequested = false;
+            }
+
             Time.Update();
 
             var snapshot = _window.PumpEvents();
@@ -230,12 +275,7 @@ public class Renderer
                 {
                     CsmAtlas.UpdateCascades(camera, sunDir);
                     _csmUniformBuffer.Update(_window.graphicsDevice, CsmAtlas);
-                    _skyboxPass.UpdateSun(-sunDir); // Skybox expects Direction TO Sun, Light is Direction FROM Sun usually. 
-                    // LightUniform is usually "Direction the light travels" (e.g. down). 
-                    // sunDir calc was: TransformNormal(0,0,-1) -> Forward vector of node.
-                    // If node looks at earth, sunDir is down. 
-                    // Nishita shader expects "SunDirection" as vector TO sun.
-                    // So if sunDir is light direction, we negate.
+                    _skyboxPass.UpdateSun(-sunDir); 
                 }
                 _sunActiveThisFrame = sunFound;
             }
@@ -311,15 +351,22 @@ public class Renderer
 
                 _scenePass.DrawDebug(_immediateRenderer, _editorManager.ShowBVH, _editorManager.ShowDynamicBVH, _editorManager.ShowSelection);
                 _immediateRenderer.Render(_cl, camera, screenSize);
+
+                // 7. Post Processing
+                if (_viewTextureView != null)
+                {
+                    _bloomPass.Render(_cl, _viewTextureView, _finalViewFramebuffer!);
+                }
             }
 
-            // 6. ImGui Pass
+            // 8. ImGui Pass
             _cl.SetFramebuffer(_window.graphicsDevice.MainSwapchain.Framebuffer);
             _cl.ClearColorTarget(0, RgbaFloat.Black);
             _editorManager.Render(_cl);
 
             _cl.End();
             _window.graphicsDevice.SubmitCommands(_cl);
+            _window.graphicsDevice.WaitForIdle();
 
             _window.graphicsDevice.SwapBuffers(_window.graphicsDevice.MainSwapchain);
         }
@@ -401,6 +448,13 @@ public class Renderer
         _csmUniformBuffer.Dispose();
         ShadowAtlas.Dispose();
         _skyboxPass.Dispose();
+        _bloomPass.Dispose();
+        _viewTexture?.Dispose();
+        _viewTextureView?.Dispose();
+        _finalViewTexture?.Dispose();
+        _finalViewFramebuffer?.Dispose();
+        _viewDepthTexture?.Dispose();
+        _viewFramebuffer?.Dispose();
         _immediateRenderer.Dispose();
         _editorManager.Dispose();
     }

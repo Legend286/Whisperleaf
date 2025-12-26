@@ -746,6 +746,24 @@ public class EditorManager : IDisposable {
                 ImGui.EndMenu();
             }
 
+            if (ImGui.BeginMenu("Post Process"))
+            {
+                bool bloom = _renderer.BloomEnabled;
+                if (ImGui.MenuItem("Enable Bloom", null, ref bloom)) _renderer.BloomEnabled = bloom;
+
+                ImGui.Separator();
+                
+                float threshold = _renderer.BloomThreshold;
+                if (ImGui.DragFloat("Bloom Threshold", ref threshold, 0.05f, 0.0f, 10.0f)) _renderer.BloomThreshold = threshold;
+
+                float intensity = _renderer.BloomIntensity;
+                if (ImGui.DragFloat("Bloom Intensity", ref intensity, 0.01f, 0.0f, 10.0f)) _renderer.BloomIntensity = intensity;
+
+                float exposure = _renderer.Exposure;
+                if (ImGui.DragFloat("Exposure", ref exposure, 0.01f, 0.0f, 10.0f)) _renderer.Exposure = exposure;
+
+                ImGui.EndMenu();
+            }
 
             if (ImGui.BeginMenu("Help")) {
                 if (ImGui.MenuItem("About")) {

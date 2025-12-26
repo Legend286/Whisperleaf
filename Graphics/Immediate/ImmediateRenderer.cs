@@ -26,7 +26,7 @@ public class ImmediateRenderer : IDisposable
     private readonly List<VertexPositionColor> _vertices = new();
     private readonly CameraUniformBuffer _cameraBuffer;
     
-    public ImmediateRenderer(GraphicsDevice gd)
+    public ImmediateRenderer(GraphicsDevice gd, OutputDescription outputDescription)
     {
         _gd = gd;
         _cameraBuffer = new CameraUniformBuffer(gd);
@@ -52,7 +52,7 @@ public class ImmediateRenderer : IDisposable
             PrimitiveTopology = PrimitiveTopology.LineList,
             ResourceLayouts = new[] { _cameraBuffer.Layout },
             ShaderSet = new ShaderSetDescription(new[] { vertexLayout }, shaders),
-            Outputs = gd.MainSwapchain.Framebuffer.OutputDescription
+            Outputs = outputDescription
         };
 
         _pipeline = factory.CreateGraphicsPipeline(pd);
