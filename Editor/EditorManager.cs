@@ -580,9 +580,9 @@ public class EditorManager : IDisposable {
              // Restore absolute index for saving/inspector
              node.Mesh.MaterialIndex = newMatIndex;
 
-             // Select the new node and open its material
+             // Select the new node and update material editor IF open
              _inspector.SetSelectedNode(node);
-             if (!string.IsNullOrEmpty(matRef.AssetPath))
+             if (!string.IsNullOrEmpty(matRef.AssetPath) && _materialEditor.IsOpen)
              {
                  _materialEditor.OpenMaterial(matRef.AssetPath);
              }
@@ -605,6 +605,13 @@ public class EditorManager : IDisposable {
 
     public void UpdateStats(RenderStats stats) {
         _statsWindow.Stats = stats;
+    }
+
+    public void RenderPreview(CommandList cl) {
+        if (_materialEditor.IsOpen)
+        {
+            _materialEditor.Viewport.Render(cl);
+        }
     }
 
     public void Render(CommandList cl) {

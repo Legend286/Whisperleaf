@@ -31,12 +31,11 @@ public class MaterialViewportWindow : EditorWindow
         _cameraController.InputEnabled = _isHovered;
         _cameraController.Update(deltaTime);
         _previewRenderer.Update(deltaTime);
-        _previewRenderer.Render();
     }
     
-    public void Render()
+    public void Render(CommandList cl)
     {
-        _previewRenderer.Render();
+        _previewRenderer.Render(cl);
     }
     
     public event Action<string>? OnMeshDropped;

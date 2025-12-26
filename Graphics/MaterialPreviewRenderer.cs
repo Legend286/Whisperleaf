@@ -18,7 +18,6 @@ namespace Whisperleaf.Graphics;
 public class MaterialPreviewRenderer : IDisposable
 {
     private readonly GraphicsDevice _gd;
-    private readonly CommandList _cl;
     
     private Framebuffer _framebuffer;
     private Texture _colorTarget;
@@ -62,7 +61,6 @@ public class MaterialPreviewRenderer : IDisposable
     public MaterialPreviewRenderer(GraphicsDevice gd, Renderer renderer)
     {
         _gd = gd;
-        _cl = gd.ResourceFactory.CreateCommandList();
         var factory = gd.ResourceFactory;
 
         _cameraBuffer = new CameraUniformBuffer(gd);
@@ -318,67 +316,60 @@ public class MaterialPreviewRenderer : IDisposable
         proj = Matrix4x4.CreateOrthographicOffCenter(minX - pad, maxX + pad, minY - pad, maxY + pad, 0.1f, 20.0f);
     }
 
-    public void Render()
+    public void Render(CommandList cl)
     {
         if (_framebuffer == null) return;
         if (_previewMesh == null) CreateMeshes();
 
-        _cl.Begin();
-
         // 1. Shadow Pass
-        _cl.SetFramebuffer(_shadowFramebuffer);
-        _cl.ClearDepthStencil(1.0f);
-        _cl.SetPipeline(_shadowPipeline);
-        _cl.SetGraphicsResourceSet(0, _orthoLightResourceSet);
+        cl.SetFramebuffer(_shadowFramebuffer);
+        cl.ClearDepthStencil(1.0f);
+        cl.SetPipeline(_shadowPipeline);
+        cl.SetGraphicsResourceSet(0, _orthoLightResourceSet);
         
         // Draw Preview Object into Shadow map using tight frustum
         _modelBuffer.Clear();
         int previewIdx = _modelBuffer.Allocate(Matrix4x4.CreateRotationY(_rotation));
-        _cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
-        _cl.SetVertexBuffer(0, _previewMesh.VertexBuffer);
-        _cl.SetIndexBuffer(_previewMesh.IndexBuffer, IndexFormat.UInt32);
-        _cl.DrawIndexed((uint)_previewMesh.IndexCount, 1, _previewMesh.Range.IndexStart, (int)_previewMesh.Range.VertexOffset, (uint)previewIdx);
+        cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
+        cl.SetVertexBuffer(0, _previewMesh.VertexBuffer);
+        cl.SetIndexBuffer(_previewMesh.IndexBuffer, IndexFormat.UInt32);
+        cl.DrawIndexed((uint)_previewMesh.IndexCount, 1, _previewMesh.Range.IndexStart, (int)_previewMesh.Range.VertexOffset, (uint)previewIdx);
 
         // 2. Main Pass
-        _cl.SetFramebuffer(_framebuffer);
-        _cl.ClearColorTarget(0, RgbaFloat.Black);
-        _cl.ClearDepthStencil(1.0f);
+        cl.SetFramebuffer(_framebuffer);
+        cl.ClearColorTarget(0, RgbaFloat.Black);
+        cl.ClearDepthStencil(1.0f);
         
         // Sky
-        _skyPass?.Render(_gd, _cl, _camera, new Vector2(Width, Height), 0);
+        _skyPass?.Render(_gd, cl, _camera, new Vector2(Width, Height), 0);
 
-        _cl.SetPipeline(_previewPipeline);
-        _cl.SetGraphicsResourceSet(0, _cameraBuffer.ResourceSet);
-        _cl.SetGraphicsResourceSet(4, _orthoLightResourceSet);
-        _cl.SetGraphicsResourceSet(5, _shadowResourceSet);
+        cl.SetPipeline(_previewPipeline);
+        cl.SetGraphicsResourceSet(0, _cameraBuffer.ResourceSet);
+        cl.SetGraphicsResourceSet(4, _orthoLightResourceSet);
+        cl.SetGraphicsResourceSet(5, _shadowResourceSet);
 
         // Draw Ground
         int groundIdx = _modelBuffer.Allocate(Matrix4x4.CreateTranslation(0, -1.0f, 0));
-        _cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
-        _cl.SetGraphicsResourceSet(2, _groundMaterial.ResourceSet);
-        _cl.SetGraphicsResourceSet(3, _groundMaterial.ParamsResourceSet);
-        _cl.SetVertexBuffer(0, _groundMesh.VertexBuffer);
-        _cl.SetIndexBuffer(_groundMesh.IndexBuffer, IndexFormat.UInt32);
-        _cl.DrawIndexed((uint)_groundMesh.IndexCount, 1, _groundMesh.Range.IndexStart, (int)_groundMesh.Range.VertexOffset, (uint)groundIdx);
+        cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
+        cl.SetGraphicsResourceSet(2, _groundMaterial.ResourceSet);
+        cl.SetGraphicsResourceSet(3, _groundMaterial.ParamsResourceSet);
+        cl.SetVertexBuffer(0, _groundMesh.VertexBuffer);
+        cl.SetIndexBuffer(_groundMesh.IndexBuffer, IndexFormat.UInt32);
+        cl.DrawIndexed((uint)_groundMesh.IndexCount, 1, _groundMesh.Range.IndexStart, (int)_groundMesh.Range.VertexOffset, (uint)groundIdx);
 
         // Draw Preview Object
-        _cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
-        _cl.SetGraphicsResourceSet(2, _previewMaterial.ResourceSet);
-        _cl.SetGraphicsResourceSet(3, _previewMaterial.ParamsResourceSet);
-        _cl.SetVertexBuffer(0, _previewMesh.VertexBuffer);
-        _cl.SetIndexBuffer(_previewMesh.IndexBuffer, IndexFormat.UInt32);
-        _cl.DrawIndexed(_previewMesh.Range.IndexCount, 1, _previewMesh.Range.IndexStart, (int)_previewMesh.Range.VertexOffset, (uint)previewIdx);
-
-        _cl.End();
-        _gd.SubmitCommands(_cl);
-        _gd.WaitForIdle(); // Critical synchronization
+        cl.SetGraphicsResourceSet(1, _modelBuffer.ResourceSet);
+        cl.SetGraphicsResourceSet(2, _previewMaterial.ResourceSet);
+        cl.SetGraphicsResourceSet(3, _previewMaterial.ParamsResourceSet);
+        cl.SetVertexBuffer(0, _previewMesh.VertexBuffer);
+        cl.SetIndexBuffer(_previewMesh.IndexBuffer, IndexFormat.UInt32);
+        cl.DrawIndexed((uint)_previewMesh.IndexCount, 1, _previewMesh.Range.IndexStart, (int)_previewMesh.Range.VertexOffset, (uint)previewIdx);
     }
 
     public Texture GetTexture() => _colorTarget;
 
     public void Dispose()
     {
-        _cl.Dispose();
         _framebuffer?.Dispose();
         _colorTarget?.Dispose();
         _depthTarget?.Dispose();

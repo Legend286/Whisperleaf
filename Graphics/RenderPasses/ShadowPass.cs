@@ -22,9 +22,6 @@ public class ShadowPass : IDisposable {
     private readonly Pipeline _alphaPipeline;
     private readonly Pipeline _cullPipeline;
 
-    private readonly CommandList _computeCl;
-    private readonly Fence _computeFence;
-
     // Buffers
     private DeviceBuffer? _viewProjsBuffer; // StructuredBuffer of mat4 for Compute
     private DeviceBuffer? _cullParamsBuffer; // Uniform for Compute
@@ -77,9 +74,6 @@ public class ShadowPass : IDisposable {
     public ShadowPass(GraphicsDevice gd) {
         _gd = gd;
         _factory = gd.ResourceFactory;
-        
-        _computeCl = _factory.CreateCommandList();
-        _computeFence = _factory.CreateFence(false);
 
         // 1. Layouts
         _viewProjsLayout = _factory.CreateResourceLayout(new ResourceLayoutDescription(
@@ -273,7 +267,7 @@ public class ShadowPass : IDisposable {
         // Upload all matrices
         var matrices = new Matrix4x4[activeFaces];
         for (int i = 0; i < activeFaces; i++) matrices[i] = allFaces[i].ViewProj;
-        _gd.UpdateBuffer(_viewProjsBuffer, 0, matrices);
+        cl.UpdateBuffer(_viewProjsBuffer, 0, matrices);
 
         // Initial Commands
         var initialCommands = new IndirectDrawIndexedArguments[_opaqueBatches.Count * activeFaces];
@@ -290,29 +284,23 @@ public class ShadowPass : IDisposable {
                 };
             }
         }
-        _gd.UpdateBuffer(_indirectCommandsStorageBuffer, 0, initialCommands);
+        cl.UpdateBuffer(_indirectCommandsStorageBuffer, 0, initialCommands);
 
-        _computeCl.Begin();
         var paramsData = new CullParams {
             TotalInstances = (uint)_totalOpaqueInstances,
             NumBatches = (uint)_opaqueBatches.Count
         };
-        _computeCl.UpdateBuffer(_cullParamsBuffer, 0, ref paramsData);
+        cl.UpdateBuffer(_cullParamsBuffer, 0, ref paramsData);
 
-        _computeCl.SetPipeline(_cullPipeline);
-        _computeCl.SetComputeResourceSet(0, _viewProjsResourceSet);
-        _computeCl.SetComputeResourceSet(1, scene.ModelBuffer.ResourceSet);
-        _computeCl.SetComputeResourceSet(2, _cullResourceSet);
-        _computeCl.SetComputeResourceSet(3, _commandsResourceSet);
-        _computeCl.SetComputeResourceSet(4, _visibleResourceSet);
-        _computeCl.SetComputeResourceSet(5, _cullParamsResourceSet);
+        cl.SetPipeline(_cullPipeline);
+        cl.SetComputeResourceSet(0, _viewProjsResourceSet);
+        cl.SetComputeResourceSet(1, scene.ModelBuffer.ResourceSet);
+        cl.SetComputeResourceSet(2, _cullResourceSet);
+        cl.SetComputeResourceSet(3, _commandsResourceSet);
+        cl.SetComputeResourceSet(4, _visibleResourceSet);
+        cl.SetComputeResourceSet(5, _cullParamsResourceSet);
         
-        _computeCl.Dispatch((uint)(_totalOpaqueInstances + 63) / 64, (uint)activeFaces, 1);
-        _computeCl.End();
-
-        _gd.SubmitCommands(_computeCl, _computeFence);
-        _gd.WaitForFence(_computeFence);
-        _gd.ResetFence(_computeFence);
+        cl.Dispatch((uint)(_totalOpaqueInstances + 63) / 64, (uint)activeFaces, 1);
 
         // --- PHASE 2: DRAWING ---
         cl.CopyBuffer(_indirectCommandsStorageBuffer, 0, _indirectCommandsBuffer, 0, (uint)(initialCommands.Length * 20));
@@ -385,8 +373,6 @@ public class ShadowPass : IDisposable {
         _mdiPipeline.Dispose();
         _alphaPipeline.Dispose();
         _cullPipeline.Dispose();
-        _computeCl.Dispose();
-        _computeFence.Dispose();
         _viewProjsBuffer?.Dispose();
         _viewProjsResourceSet?.Dispose();
         _cullParamsBuffer?.Dispose();

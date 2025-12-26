@@ -22,9 +22,6 @@ public class Renderer
 {
     private readonly Window _window;
     private readonly CommandList _cl;
-    private readonly CommandList _shadowCL;
-    private readonly CommandList _csmCL;
-    private readonly CommandList _depthCL;
     private readonly List<IRenderPass> _passes = new();
     private readonly EditorManager _editorManager;
     private readonly GltfPass _scenePass;
@@ -68,9 +65,6 @@ public class Renderer
     {
         _window = window;
         _cl = _window.graphicsDevice.ResourceFactory.CreateCommandList();
-        _shadowCL = _window.graphicsDevice.ResourceFactory.CreateCommandList();
-        _csmCL = _window.graphicsDevice.ResourceFactory.CreateCommandList();
-        _depthCL = _window.graphicsDevice.ResourceFactory.CreateCommandList();
         PbrLayout.Initialize(_window.graphicsDevice);
         
         Physics = new PhysicsThread();
@@ -246,12 +240,15 @@ public class Renderer
                 _sunActiveThisFrame = sunFound;
             }
 
-            // Update Transforms for all passes (Shadows/Main)
-            _scenePass.UpdateModelBuffer();
-
             // Parallel Render Passes (Shadows, CSM, Depth) - RECORDING
             // Combine all commands into one list
             _cl.Begin();
+
+            // 0. Render Material Preview (integrated into main CL)
+            _editorManager.RenderPreview(_cl);
+
+            // Update Transforms for all passes (Shadows/Main)
+            _scenePass.UpdateModelBuffer(_cl);
 
             if (camera != null)
             {
@@ -283,6 +280,8 @@ public class Renderer
                 // 5. Main Pass
                 _cl.SetFramebuffer(_viewFramebuffer);
                 _cl.ClearColorTarget(0, RgbaFloat.Black);
+                // Depth already rendered by DepthPass
+
                 _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
 
                 foreach (var pass in _passes)
@@ -404,8 +403,5 @@ public class Renderer
         _skyboxPass.Dispose();
         _immediateRenderer.Dispose();
         _editorManager.Dispose();
-        _shadowCL.Dispose();
-        _csmCL.Dispose();
-        _depthCL.Dispose();
     }
 }

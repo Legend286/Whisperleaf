@@ -1,7 +1,6 @@
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -24,7 +23,6 @@ namespace Whisperleaf.Graphics.RenderPasses;
 public sealed class GltfPass : IRenderPass, IDisposable {
     private readonly GraphicsDevice _gd;
     private readonly Pipeline _pipeline;
-    private readonly ConcurrentQueue<Action> _mainThreadQueue = new();
     private readonly CameraUniformBuffer _cameraBuffer;
     private readonly ModelUniformBuffer _modelBuffer; // Full set for MDI/Culling
     private readonly ModelUniformBuffer _compactModelBuffer; // Visible set for main pass
@@ -548,29 +546,6 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _customMeshCache[name] = new MeshGpu(_geometryBuffer, data);
     }
 
-    public void LoadScene(SceneAsset scene, bool additive = false) {
-        _gd.WaitForIdle();
-
-        if (!additive) {
-            ClearResources();
-        }
-
-
-        int[] materialMap = LoadMaterials(scene);
-
-        LoadMeshes(scene, materialMap);
-
-        SortAndUploadInstances();
-    }
-
-    private int[] LoadMaterials(SceneAsset scene)
-    {
-        // For sync loading, we just call the async prep but wait for it (simpler than duplicating logic)
-        // Actually, just call UploadMaterials with a freshly prepared array
-        var prepared = PrepareMaterials(scene);
-        return UploadMaterials(scene, prepared);
-    }
-
     private void PreloadImage(string? path, ref Image<Rgba32>? image)
     {
         if (string.IsNullOrEmpty(path)) return;
@@ -592,19 +567,16 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         catch {}
     }
 
-    private MaterialData?[] PrepareMaterials(SceneAsset scene)
-    {
+    private MaterialData?[] PrepareMaterials(SceneAsset scene) {
         var materials = new MaterialData?[scene.Materials.Count];
         
-        Parallel.For(0, scene.Materials.Count, i =>
-        {
+        for (int i = 0; i < scene.Materials.Count; i++) {
             var src = scene.Materials[i];
-            
-            // Check cache (thread-safe check only)
             string hash = (!string.IsNullOrEmpty(src.AssetPath)) ? "FILE:" + src.AssetPath : ComputeMaterialHash(src);
+            
             bool isCached = false;
-            lock (_materialCache) { if (_materialCache.ContainsKey(hash)) isCached = true; }
-            if (isCached) return;
+            if (_materialCache.ContainsKey(hash)) isCached = true;
+            if (isCached) continue;
 
             MaterialData? material = null;
             if (!string.IsNullOrEmpty(src.AssetPath) && File.Exists(src.AssetPath))
@@ -642,6 +614,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                     EmissiveFactor = src.EmissiveFactor,
                     MetallicFactor = src.MetallicFactor,
                     RoughnessFactor = src.RoughnessFactor,
+                    AlphaMode = src.AlphaMode,
+                    AlphaCutoff = src.AlphaCutoff,
                     UsePackedRMA = !string.IsNullOrEmpty(src.RMAHash)
                 };
                 
@@ -674,7 +648,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                 
                 materials[i] = material;
             }
-        });
+        }
         
         return materials;
     }
@@ -721,101 +695,87 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     }
 
     public void LoadScene(string scenePath) {
-        LoadSceneAsync(scenePath);
+        LoadScene(scenePath, false);
     }
 
-    public void LoadSceneAsync(string scenePath, bool additive = false)
+    public void LoadScene(string scenePath, bool additive)
     {
-        Task.Run(() =>
+        try 
         {
-            try 
-            {
-                var sceneAsset = SceneAsset.Load(scenePath);
-                
-                // 1. Prepare Materials in Background (Heavy IO)
-                var materials = PrepareMaterials(sceneAsset);
-                
-                _mainThreadQueue.Enqueue(() =>
-                {
-                    if (!additive) ClearResources();
-                    
-                    // 2. Upload Materials on Main Thread (Fast-ish GPU ops)
-                    int[] materialMap = UploadMaterials(sceneAsset, materials);
-                    
-                    Task.Run(() => LoadMeshesAsync(sceneAsset, materialMap));
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[GltfPass] Async load failed: {ex.Message}");
-            }
-        });
+            var sceneAsset = SceneAsset.Load(scenePath);
+            LoadScene(sceneAsset, additive);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[GltfPass] Load failed: {ex.Message}");
+        }
     }
 
-    private void LoadMeshesAsync(SceneAsset scene, int[] materialMap)
+    public void LoadScene(SceneAsset sceneAsset, bool additive = false)
+    {
+        if (!additive) ClearResources();
+
+        // 1. Prepare Materials (Synchronous)
+        var materials = PrepareMaterials(sceneAsset);
+        
+        // 2. Upload Materials
+        int[] materialMap = UploadMaterials(sceneAsset, materials);
+        
+        // 3. Load Meshes
+        LoadMeshes(sceneAsset, materialMap);
+        
+        _structureChanged = true;
+    }
+
+    private void LoadMeshes(SceneAsset scene, int[] materialMap)
     {
         if (scene.RootNodes.Count == 0) return;
 
         foreach (var node in scene.RootNodes)
         {
-            TraverseAndLoadAsync(node, Matrix4x4.Identity, null, materialMap);
+            TraverseAndLoad(node, Matrix4x4.Identity, null, materialMap);
         }
     }
 
-    private void TraverseAndLoadAsync(SceneNode node, Matrix4x4 parentWorld, SceneNode? parent, int[] materialMap)
+    private void TraverseAndLoad(SceneNode node, Matrix4x4 parentWorld, SceneNode? parent, int[] materialMap)
     {
         var worldTransform = node.LocalTransform * parentWorld;
 
-        // Capture state for main thread
-        _mainThreadQueue.Enqueue(() =>
+        _nodeParents[node] = parent;
+        _nodeWorldTransforms[node] = worldTransform;
+        if (node.Light != null)
         {
-            _nodeParents[node] = parent;
-            _nodeWorldTransforms[node] = worldTransform;
-            if (node.Light != null)
-            {
-                _lightNodes.Add(node);
-                _structureChanged = true;
-            }
-        });
+            _lightNodes.Add(node);
+            _structureChanged = true;
+        }
 
         if (node.Mesh != null)
         {
             string hash = node.Mesh.MeshHash;
-            bool alreadyLoaded = false;
-            
-            // Check if already in cache (lock for safety, though simplistic)
-            lock (_meshCache)
-            {
-                if (_meshCache.ContainsKey(hash)) alreadyLoaded = true;
-            }
-
+            MeshGpu? meshGpu = null;
             MeshData? data = null;
-            if (!alreadyLoaded)
+
+            if (!_meshCache.ContainsKey(hash) && !_customMeshCache.ContainsKey(hash))
             {
                 if (AssetCache.HasMesh(hash, out var meshPath))
                 {
                     try 
                     {
-                        // IO Heavy Operation
                         data = WlMeshFormat.Read(meshPath, out _);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[GltfPass] Failed to read mesh async: {ex.Message}");
+                        Console.WriteLine($"[GltfPass] Failed to read mesh: {ex.Message}");
                     }
                 }
             }
 
-            _mainThreadQueue.Enqueue(() =>
-            {
-                // Final check and creation on Main Thread
-                AddMeshInstance(node, worldTransform, data, node.Mesh.MaterialIndex, materialMap);
-            });
+            AddMeshInstance(node, worldTransform, data, node.Mesh.MaterialIndex, materialMap);
         }
 
         foreach (var child in node.Children)
         {
-            TraverseAndLoadAsync(child, worldTransform, node, materialMap);
+            TraverseAndLoad(child, worldTransform, node, materialMap);
         }
     }
 
@@ -827,6 +787,10 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         if (_meshCache.TryGetValue(hash, out meshGpu))
         {
             // Already exists
+        }
+        else if (_customMeshCache.TryGetValue(hash, out meshGpu))
+        {
+            // Custom mesh (e.g. primitive)
         }
         else if (data != null)
         {
@@ -924,18 +888,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private List<int> _cachedVisibleIndices = new();
 
     public void Update(Camera camera) {
-        // Process Async Queue
-        int operations = 0;
-        bool queueProcessed = false;
-        while (_mainThreadQueue.TryDequeue(out var action))
-        {
-            action();
-            operations++;
-            queueProcessed = true;
-            if (operations > 100) break; // Increased limit for smoother loading
-        }
-
-        if (queueProcessed || _structureChanged)
+        if (_structureChanged)
         {
             SortAndUploadInstances();
             _structureChanged = false;
@@ -983,23 +936,21 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
     }
 
-    public void UpdateModelBuffer() {
+    public void UpdateModelBuffer(CommandList cl) {
         if (_meshInstances.Count == 0) return;
         
-        // This array alloc every frame is not ideal, but for now it ensures correctness.
-        // Optimization: Keep a persistent array or update visible only (but compute cull needs all?)
         var uniforms = new ModelUniform[_meshInstances.Count];
         
-        Parallel.For(0, _meshInstances.Count, i => {
+        for (int i = 0; i < _meshInstances.Count; i++) {
             var inst = _meshInstances[i];
             if (_nodeWorldTransforms.TryGetValue(inst.Node, out var world)) {
                 uniforms[i] = new ModelUniform(world);
             } else {
                 uniforms[i] = new ModelUniform(Matrix4x4.Identity);
             }
-        });
+        }
         
-        _modelBuffer.UpdateAll(uniforms);
+        _modelBuffer.UpdateAll(cl, uniforms);
     }
 
     public void PrepareRender(GraphicsDevice gd, CommandList cl, Camera? camera, Vector2 screenSize, int debugMode)
@@ -1229,114 +1180,6 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         StructureVersion++;
     }
 
-
-                
-
-
-    private void LoadMeshes(SceneAsset scene, int[] materialMap) {
-        if (scene.RootNodes.Count == 0)
-            return;
-
-        _loggedFirstInstance = false;
-
-        foreach (var node in scene.RootNodes) {
-            LoadMeshRecursive(node, Matrix4x4.Identity, null, materialMap);
-        }
-    }
-
-    private void LoadMeshRecursive(SceneNode node, Matrix4x4 parentWorld, SceneNode? parent, int[] materialMap) {
-        _nodeParents[node] = parent;
-        var worldTransform = node.LocalTransform * parentWorld;
-        _nodeWorldTransforms[node] = worldTransform;
-
-        if (node.Light != null) {
-            Console.WriteLine($"[GltfPass] Found light in node '{node.Name}'");
-            _lightNodes.Add(node);
-        }
-
-
-        if (node.Mesh != null) {
-            var meshRef = node.Mesh;
-
-            if (TryLoadMesh(meshRef, materialMap, out MeshGpu? meshGpu, out int globalMaterialIndex)) {
-                var mesh = meshGpu!;
-
-                int transformIndex = _modelBuffer.Allocate(worldTransform);
-                int instanceIndex = _meshInstances.Count;
-                _meshInstances.Add(new MeshInstance(mesh, globalMaterialIndex, transformIndex, node));
-                _nodeToInstance[node] = instanceIndex;
-
-                if (!_loggedFirstInstance) {
-                    _loggedFirstInstance = true;
-                    LogInstanceDebug(node, node.LocalTransform, worldTransform);
-                }
-            }
-        }
-
-
-        foreach (var child in node.Children) {
-            LoadMeshRecursive(child, worldTransform, node, materialMap);
-        }
-    }
-
-    private bool TryLoadMesh(MeshReference meshRef, int[] materialMap, out MeshGpu? meshGpu, out int globalMaterialIndex) {
-        meshGpu = null;
-        globalMaterialIndex = 0;
-
-        if (_customMeshCache.TryGetValue(meshRef.MeshHash, out meshGpu)) {
-            Console.WriteLine($"[GltfPass] Found custom mesh '{meshRef.MeshHash}'");
-
-            if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
-                globalMaterialIndex = materialMap[meshRef.MaterialIndex];
-            }
-
-
-            return true;
-        }
-        else {
-            // Console.WriteLine($"[GltfPass] Custom mesh '{meshRef.MeshHash}' NOT found in cache.");
-        }
-
-
-        if (_meshCache.TryGetValue(meshRef.MeshHash, out meshGpu)) {
-            if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
-                globalMaterialIndex = materialMap[meshRef.MaterialIndex];
-            }
-
-
-            return true;
-        }
-
-
-        if (!AssetCache.HasMesh(meshRef.MeshHash, out var meshPath)) {
-            Console.WriteLine($"[ScenePass] Missing cached mesh for hash {meshRef.MeshHash}");
-
-            return false;
-        }
-
-
-        try {
-            var meshData = WlMeshFormat.Read(meshPath, out _);
-            meshGpu = new MeshGpu(_geometryBuffer, meshData);
-            _meshCache[meshRef.MeshHash] = meshGpu;
-
-            SourceVertices += meshData.Vertices.Length / 12;
-            SourceIndices += meshData.Indices.Length;
-
-            if (meshRef.MaterialIndex >= 0 && meshRef.MaterialIndex < materialMap.Length) {
-                globalMaterialIndex = materialMap[meshRef.MaterialIndex];
-            }
-
-
-            return true;
-        }
-        catch (Exception ex) {
-            Console.WriteLine($"[ScenePass] Failed to load mesh '{meshRef.MeshHash}': {ex.Message}");
-
-            return false;
-        }
-    }
-
     private MaterialData? ResolveMaterial(int index) {
         if (index >= 0 && index < _materials.Count) {
             return _materials[index];
@@ -1347,7 +1190,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     }
 
     private string ComputeMaterialHash(MaterialReference mat) {
-        return $"{mat.BaseColorFactor}_{mat.EmissiveFactor}_{mat.MetallicFactor}_{mat.RoughnessFactor}_{mat.BaseColorHash}_{mat.NormalHash}_{mat.RMAHash}_{mat.EmissiveHash}";
+        return $"{mat.BaseColorFactor}_{mat.EmissiveFactor}_{mat.MetallicFactor}_{mat.RoughnessFactor}_{mat.AlphaMode}_{mat.AlphaCutoff}_{mat.BaseColorHash}_{mat.NormalHash}_{mat.RMAHash}_{mat.EmissiveHash}";
     }
 
     private static string? ResolveCachedTexture(string? hash) {
@@ -1358,6 +1201,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     }
 
     private void ClearResources() {
+        _gd.WaitForIdle(); // Ensure no pending frames are using resources
         Console.WriteLine("[GltfPass] ClearResources called");
 
         foreach (var mesh in _meshCache.Values) {
