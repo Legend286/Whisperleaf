@@ -1,6 +1,7 @@
 using ImGuiNET;
 using ImGuizmoNET;
 using System.Numerics;
+using imnodesNET;
 using Veldrid;
 using Whisperleaf.AssetPipeline;
 using Whisperleaf.AssetPipeline.Scene;
@@ -401,6 +402,7 @@ public class Renderer
         ImGuizmo.SetOrthographic(false);
         ImGuizmo.SetDrawlist();
         ImGuizmo.SetGizmoSizeClipSpace(0.05f);
+
         ImGuizmo.SetRect(_viewportWindow.Position.X, _viewportWindow.Position.Y, _viewportWindow.Size.X, _viewportWindow.Size.Y);
 
         if (_editorManager.SnapEnabled)
