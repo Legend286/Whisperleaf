@@ -152,7 +152,7 @@ public class CsmPass : IDisposable
             new OutputDescription(new OutputAttachmentDescription(depthFormat))));
     }
 
-    public void RefreshSceneBatches(GltfPass scene)
+    public void Update(GltfPass scene)
     {
         if (_lastSceneVersion == scene.StructureVersion) return;
         _lastSceneVersion = scene.StructureVersion;
@@ -276,8 +276,6 @@ public class CsmPass : IDisposable
     public void PrepareRender(CsmAtlas atlas, GltfPass scene)
     {
         if (scene.MeshInstances.Count == 0) return;
-
-        RefreshSceneBatches(scene);
 
         if (_totalOpaqueInstances == 0 && _alphaInstances.Count == 0) return;
 

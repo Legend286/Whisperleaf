@@ -63,6 +63,10 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     private ResourceSet _lightCullReadResourceSet;
     private Vector2 _lastScreenSize = Vector2.Zero;
 
+    private TextureView? _hiZView;
+    private Texture _dummyHiZ;
+    private TextureView _dummyHiZView;
+
     public ShadowAtlas? ShadowAtlas { get; set; }
 
     // Statistics
@@ -221,7 +225,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
              // provided we aren't using the old set yet.
              // PrepareRender calls CullLights immediately after UpdateGPU.
              // So we must update the set NOW.
-             ResizeLightCullingResources((uint)_lastScreenSize.X, (uint)_lastScreenSize.Y);
+             RecreateLightCullResourceSet();
         };
         _shadowDataBuffer = new ShadowDataBuffer(gd);
 
@@ -276,7 +280,9 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             new ResourceLayoutElementDescription("LightParams", ResourceKind.UniformBuffer, ShaderStages.Compute),
             new ResourceLayoutElementDescription("LightGrid", ResourceKind.TextureReadWrite, ShaderStages.Compute),
             new ResourceLayoutElementDescription("LightIndices", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute),
-            new ResourceLayoutElementDescription("Counter", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute)
+            new ResourceLayoutElementDescription("Counter", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("HiZMap", ResourceKind.TextureReadOnly, ShaderStages.Compute),
+            new ResourceLayoutElementDescription("HiZSampler", ResourceKind.Sampler, ShaderStages.Compute)
         ));
 
         _lightCullReadLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
@@ -284,6 +290,9 @@ public sealed class GltfPass : IRenderPass, IDisposable {
             new ResourceLayoutElementDescription("LightGridSampler", ResourceKind.Sampler, ShaderStages.Fragment),
             new ResourceLayoutElementDescription("LightIndices", ResourceKind.StructuredBufferReadOnly, ShaderStages.Fragment)
         ));
+
+        _dummyHiZ = _gd.ResourceFactory.CreateTexture(TextureDescription.Texture2D(1, 1, 1, 1, PixelFormat.R32_Float, TextureUsage.Sampled));
+        _dummyHiZView = _gd.ResourceFactory.CreateTextureView(_dummyHiZ);
 
         var computeShader = ShaderCache.GetShader(_gd, ShaderStages.Compute, "Graphics/Shaders/LightCulling.comp");
         var pd = new ComputePipelineDescription(computeShader, _lightCullLayout, 16, 16, 1);
@@ -305,7 +314,6 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _lightGridSampledView?.Dispose();
         _lightIndexListBuffer?.Dispose();
         _lightIndexCounterBuffer?.Dispose();
-        _lightCullResourceSet?.Dispose();
         _lightCullReadResourceSet?.Dispose();
 
         uint tilesX = (width + 15) / 16;
@@ -320,27 +328,35 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _lightGridView = factory.CreateTextureView(_lightGridTexture);
         _lightGridSampledView = factory.CreateTextureView(_lightGridTexture);
 
-        uint maxLightsPerTile = 256;
+        uint maxLightsPerTile = 1024;
         uint totalIndices = tilesX * tilesY * maxLightsPerTile;
         _lightIndexListBuffer = factory.CreateBuffer(new BufferDescription(totalIndices * 4, BufferUsage.StructuredBufferReadWrite, 4));
 
         _lightIndexCounterBuffer = factory.CreateBuffer(new BufferDescription(4, BufferUsage.StructuredBufferReadWrite, 4));
 
-        _lightCullResourceSet = factory.CreateResourceSet(new ResourceSetDescription(
-            _lightCullLayout,
-            _cameraBuffer.Buffer,
-            _lightBuffer.DataBuffer,
-            _lightBuffer.ParamBuffer,
-            _lightGridView,
-            _lightIndexListBuffer,
-            _lightIndexCounterBuffer
-        ));
+        RecreateLightCullResourceSet();
 
         _lightCullReadResourceSet = factory.CreateResourceSet(new ResourceSetDescription(
             _lightCullReadLayout,
             _lightGridSampledView,
             _gd.PointSampler,
             _lightIndexListBuffer
+        ));
+    }
+
+    private void RecreateLightCullResourceSet()
+    {
+        _lightCullResourceSet?.Dispose();
+        _lightCullResourceSet = _gd.ResourceFactory.CreateResourceSet(new ResourceSetDescription(
+            _lightCullLayout,
+            _cameraBuffer.Buffer,
+            _lightBuffer.DataBuffer,
+            _lightBuffer.ParamBuffer,
+            _lightGridView,
+            _lightIndexListBuffer,
+            _lightIndexCounterBuffer,
+            _hiZView ?? _dummyHiZView,
+            _gd.PointSampler
         ));
     }
 
@@ -1335,6 +1351,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     }
 
     public void Dispose() {
+        _dummyHiZ.Dispose();
+        _dummyHiZView.Dispose();
         ClearResources();
         _cameraBuffer.Dispose();
         _modelBuffer.Dispose();

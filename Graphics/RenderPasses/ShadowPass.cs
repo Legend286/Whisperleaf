@@ -25,7 +25,7 @@ public class ShadowPass : IDisposable {
     // Buffers
     private DeviceBuffer? _viewProjsBuffer; // StructuredBuffer of mat4 for Compute
     private DeviceBuffer? _cullParamsBuffer; // Uniform for Compute
-    private DeviceBuffer? _drawCameraBuffer; // Uniform for Graphics
+    private DeviceBuffer[] _drawCameraBuffers; // Uniform for Graphics (Per Face)
     
     private DeviceBuffer? _batchBuffer;
     private DeviceBuffer? _instanceBatchMapBuffer;
@@ -36,7 +36,7 @@ public class ShadowPass : IDisposable {
     // Resource Sets
     private ResourceSet? _viewProjsResourceSet;
     private ResourceSet? _cullParamsResourceSet;
-    private ResourceSet? _drawCameraResourceSet;
+    private ResourceSet[] _drawCameraResourceSets;
     private ResourceSet? _cullResourceSet;
     private ResourceSet? _commandsResourceSet;
     private ResourceSet? _visibleResourceSet;
@@ -105,8 +105,13 @@ public class ShadowPass : IDisposable {
         _cullParamsBuffer = _factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer));
         _cullParamsResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(_cullParamsLayout, _cullParamsBuffer));
 
-        _drawCameraBuffer = _factory.CreateBuffer(new BufferDescription(224, BufferUsage.UniformBuffer));
-        _drawCameraResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(_vpLayout, _drawCameraBuffer));
+        _drawCameraBuffers = new DeviceBuffer[MaxFaces];
+        _drawCameraResourceSets = new ResourceSet[MaxFaces];
+        for (int i = 0; i < MaxFaces; i++)
+        {
+            _drawCameraBuffers[i] = _factory.CreateBuffer(new BufferDescription(224, BufferUsage.UniformBuffer | BufferUsage.Dynamic));
+            _drawCameraResourceSets[i] = _factory.CreateResourceSet(new ResourceSetDescription(_vpLayout, _drawCameraBuffers[i]));
+        }
 
         // 3. Shaders
         var cullShader = ShaderCache.GetShader(_gd, ShaderStages.Compute, "Graphics/Shaders/CullShadow.comp");
@@ -156,6 +161,12 @@ public class ShadowPass : IDisposable {
             new OutputDescription(new OutputAttachmentDescription(depthFormat))));
     }
 
+    public void Update(GltfPass scene)
+    {
+        if (scene.MeshInstances.Count == 0) return;
+        RefreshSceneBatches(scene);
+    }
+    
     public void RefreshSceneBatches(GltfPass scene) {
         if (_lastSceneVersion == scene.StructureVersion) return;
         _lastSceneVersion = scene.StructureVersion;
@@ -248,8 +259,6 @@ public class ShadowPass : IDisposable {
     public void Render(GraphicsDevice gd, CommandList cl, ShadowAtlas atlas, GltfPass scene) {
         if (scene.MeshInstances.Count == 0) return;
 
-        RefreshSceneBatches(scene);
-
         if (_totalOpaqueInstances == 0 && _alphaInstances.Count == 0) return;
 
         var allocatedNodes = new List<SceneNode>(atlas.GetAllocatedNodes());
@@ -326,7 +335,7 @@ public class ShadowPass : IDisposable {
             ViewProjection = alloc.ViewProj,
             CameraPos = Vector3.Zero
         };
-        cl.UpdateBuffer(_drawCameraBuffer, 0, ref camData);
+        cl.UpdateBuffer(_drawCameraBuffers[faceIdx], 0, ref camData);
 
         var fb = atlas.GetFramebuffer(alloc.PageIndex);
         cl.SetFramebuffer(fb);
@@ -335,7 +344,7 @@ public class ShadowPass : IDisposable {
         // 1. Opaque Path (MDI)
         if (_totalOpaqueInstances > 0 && _indirectCommandsBuffer != null) {
             cl.SetPipeline(_mdiPipeline);
-            cl.SetGraphicsResourceSet(0, _drawCameraResourceSet);
+            cl.SetGraphicsResourceSet(0, _drawCameraResourceSets[faceIdx]);
             cl.SetGraphicsResourceSet(1, scene.ModelBuffer.ResourceSet);
             cl.SetGraphicsResourceSet(2, _visibleResourceSet);
 
@@ -349,7 +358,7 @@ public class ShadowPass : IDisposable {
         // 2. Alpha Path (Direct)
         if (_alphaInstances.Count > 0) {
             cl.SetPipeline(_alphaPipeline);
-            cl.SetGraphicsResourceSet(0, _drawCameraResourceSet);
+            cl.SetGraphicsResourceSet(0, _drawCameraResourceSets[faceIdx]);
             cl.SetGraphicsResourceSet(1, scene.ModelBuffer.ResourceSet);
             cl.SetVertexBuffer(0, scene.GeometryBuffer.VertexBuffer);
             cl.SetIndexBuffer(scene.GeometryBuffer.IndexBuffer, IndexFormat.UInt32);
@@ -378,8 +387,10 @@ public class ShadowPass : IDisposable {
         _viewProjsResourceSet?.Dispose();
         _cullParamsBuffer?.Dispose();
         _cullParamsResourceSet?.Dispose();
-        _drawCameraBuffer?.Dispose();
-        _drawCameraResourceSet?.Dispose();
+        
+        foreach (var b in _drawCameraBuffers) b?.Dispose();
+        foreach (var s in _drawCameraResourceSets) s?.Dispose();
+
         _batchBuffer?.Dispose();
         _instanceBatchMapBuffer?.Dispose();
         _indirectCommandsBuffer?.Dispose();

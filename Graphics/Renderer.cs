@@ -288,6 +288,9 @@ public class Renderer
             // Prepare Resources (GD Update - before CL)
             _scenePass.PrepareResources(_window.graphicsDevice, camera, screenSize, debugMode);
 
+            _shadowPass.Update(_scenePass);
+            _csmPass.Update(_scenePass);
+
             // Parallel Render Passes (Shadows, CSM, Depth) - RECORDING
             // Combine all commands into one list
             _cl.Begin();
