@@ -69,6 +69,12 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     public ShadowAtlas? ShadowAtlas { get; set; }
 
+    public void SetHiZTexture(TextureView view)
+    {
+        _hiZView = view;
+        RecreateLightCullResourceSet();
+    }
+
     // Statistics
     public int DrawCalls { get; private set; }
 

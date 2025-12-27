@@ -1,0 +1,30 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform texture2D InputTexture;
+layout(set = 0, binding = 1) uniform sampler InputSampler;
+layout(set = 0, binding = 2, r32f) uniform writeonly image2D OutputTexture;
+layout(set = 0, binding = 3) uniform Params {
+    vec2 InputSize;
+    vec2 Padding;
+};
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 outSize = imageSize(OutputTexture);
+    if (pos.x >= outSize.x || pos.y >= outSize.y) return;
+
+    ivec2 srcPos = pos * 2;
+    ivec2 maxPos = ivec2(InputSize) - 1;
+
+    // Use texelFetch on combined sampler
+    sampler2D src = sampler2D(InputTexture, InputSampler);
+
+    float d0 = texelFetch(src, min(srcPos, maxPos), 0).r;
+    float d1 = texelFetch(src, min(srcPos + ivec2(1, 0), maxPos), 0).r;
+    float d2 = texelFetch(src, min(srcPos + ivec2(0, 1), maxPos), 0).r;
+    float d3 = texelFetch(src, min(srcPos + ivec2(1, 1), maxPos), 0).r;
+
+    float maxDepth = max(max(d0, d1), max(d2, d3));
+    imageStore(OutputTexture, pos, vec4(maxDepth, 0, 0, 0));
+}

@@ -37,6 +37,7 @@ public class Renderer
     public ResourceSet CsmResourceSet => _csmUniformBuffer.ResourceSet;
     private readonly SkyboxPass _skyboxPass;
     private readonly BloomPass _bloomPass;
+    private readonly HiZPass _hiZPass;
 
     // Game View Resources
     private Framebuffer? _viewFramebuffer;
@@ -102,6 +103,7 @@ public class Renderer
         _csmPass = new CsmPass(_window.graphicsDevice);
         _skyboxPass = new SkyboxPass(_window.graphicsDevice, _scenePass.CameraBuffer, hdrOutputDesc);
         _bloomPass = new BloomPass(_window.graphicsDevice, ldrOutputDesc);
+        _hiZPass = new HiZPass(_window.graphicsDevice);
 
         _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice, hdrOutputDesc);
 
@@ -180,12 +182,15 @@ public class Renderer
         _viewDepthTexture = factory.CreateTexture(TextureDescription.Texture2D(
             width, height, 1, 1,
             depthFormat,
-            TextureUsage.DepthStencil));
-
+            TextureUsage.DepthStencil | TextureUsage.Sampled));
+        
         _viewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(_viewDepthTexture, _viewTexture));
         _finalViewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(null, _finalViewTexture));
 
         _bloomPass.Resize(width, height);
+        _hiZPass.Resize(width, height);
+        _hiZPass.UpdateResources(_viewDepthTexture);
+        _scenePass.SetHiZTexture(_hiZPass.HiZTextureView);
     }
 
     public IntPtr GetGameViewTextureId()
@@ -320,6 +325,7 @@ public class Renderer
                     _cl.SetFramebuffer(_viewFramebuffer);
                     _cl.ClearDepthStencil(1.0f);
                     _depthPass.Render(_cl, _scenePass, camera);
+                    _hiZPass.Execute(_cl);
                 }
 
                 // 4. Record Light Culling (Compute)
@@ -452,6 +458,7 @@ public class Renderer
         Physics.Dispose();
         _scenePass.Dispose();
         _depthPass.Dispose();
+        _hiZPass.Dispose();
         _shadowPass.Dispose();
         _csmPass.Dispose();
         CsmAtlas.Dispose();

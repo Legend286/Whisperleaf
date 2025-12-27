@@ -37,143 +37,94 @@ layout(std430, set = 0, binding = 5) buffer LightIndexCounter {
     uint Counter;
 };
 
+layout(set = 0, binding = 6) uniform texture2D HiZMap;
+layout(set = 0, binding = 7) uniform sampler HiZSampler;
+
 shared uint s_TileLightIndices[1024];
 shared uint s_TileLightCount;
 
-// Constants for Ray-Cone test
+const float MAX_DIST = 1e20;
 const float RC_EPSILON_T = 1e-5;
 const float RC_EPSILON_GEOM = 1e-5;
 
-bool TestRaySphere(vec3 rayOrigin, vec3 rayDir, vec3 spherePos, float radius) {
+float IntersectRaySphere(vec3 rayOrigin, vec3 rayDir, vec3 spherePos, float radius) {
     vec3 oc = rayOrigin - spherePos;
-    float a = dot(rayDir, rayDir);
     float b = 2.0 * dot(oc, rayDir);
     float c = dot(oc, oc) - radius * radius;
-    const float A_EPSILON = 1e-7;
 
-    if (abs(a) < A_EPSILON) {
-        if (c <= 0.0) return true;
-        return false;
-    }
+    if (c <= 0.0) return 0.0; // Inside
 
-    float discriminant = b * b - 4.0 * a * c;
-    if (discriminant < 0.0) return false;
+    float discriminant = b * b - 4.0 * c;
+    if (discriminant < 0.0) return MAX_DIST;
 
     float sqrtD = sqrt(discriminant);
-    float inv2a = 1.0 / (2.0 * a);
-    float tNear = (-b - sqrtD) * inv2a;
-    float tFar  = (-b + sqrtD) * inv2a;
+    float tNear = (-b - sqrtD) * 0.5;
+    float tFar  = (-b + sqrtD) * 0.5;
 
-    if (tNear > tFar) {
-        float temp = tNear;
-        tNear = tFar;
-        tFar = temp;
-    }
-
-    if (tFar < 0.0) return false;
-
-    return true;
+    if (tFar < 0.0) return MAX_DIST;
+    return tNear > 0.0 ? tNear : tFar;
 }
 
-bool TestRayCone(vec3 rayOrigin, vec3 rayDir, vec3 coneApex, vec3 coneAxis, float cosConeAngle, float coneHeight) {
-    coneHeight = max(coneHeight, RC_EPSILON_T);
+float IntersectRayCone(vec3 rayOrigin, vec3 rayDir, vec3 coneApex, vec3 coneAxis, float cosConeAngle, float coneHeight) {
     float robustCosConeAngle = clamp(cosConeAngle, RC_EPSILON_GEOM, 1.0 - RC_EPSILON_GEOM);
     float cos2Angle = robustCosConeAngle * robustCosConeAngle;
 
-    // Check if ray origin is inside the cone
     vec3 originToApex = rayOrigin - coneApex;
     float originHeight = dot(originToApex, coneAxis);
-    
     if (originHeight >= -RC_EPSILON_T && originHeight <= coneHeight + RC_EPSILON_T) {
-        if (originHeight > RC_EPSILON_T) {
-            float originDist = length(originToApex);
-            float originRadialDistSq = max(0.0, originDist * originDist - originHeight * originHeight);
-            
-            float sinAngle = sqrt(max(0.0, 1.0 - cos2Angle));
-            float expectedRadius = originHeight * sinAngle / robustCosConeAngle;
-            
-            // Check if inside radius (sqrt of squared dist vs radius)
-            if (sqrt(originRadialDistSq) <= expectedRadius + RC_EPSILON_T) {
-                return true;
-            }
-        } else {
-            // Very close to apex
-            return true;
-        }
+        float originDistSq = dot(originToApex, originToApex);
+        float radialDistSq = max(0.0, originDistSq - originHeight * originHeight);
+        float expectedRadius = originHeight * sqrt(max(0.0, 1.0 - cos2Angle)) / robustCosConeAngle;
+        if (sqrt(radialDistSq) <= expectedRadius + RC_EPSILON_T) return 0.0;
     }
 
-    vec3 co = originToApex;
     float rayDirDotAxis = dot(rayDir, coneAxis);
-    float coDotAxis = dot(co, coneAxis);
-
+    float coDotAxis = dot(originToApex, coneAxis);
     float A = rayDirDotAxis * rayDirDotAxis - cos2Angle;
-    float B = 2.0 * (rayDirDotAxis * coDotAxis - dot(rayDir, co) * cos2Angle);
-    float C = coDotAxis * coDotAxis - dot(co, co) * cos2Angle;
+    float B = 2.0 * (rayDirDotAxis * coDotAxis - dot(rayDir, originToApex) * cos2Angle);
+    float C = coDotAxis * coDotAxis - dot(originToApex, originToApex) * cos2Angle;
 
-    float t1 = -1.0;
-    float t2 = -1.0;
-
-    if (abs(A) < RC_EPSILON_GEOM) {
-        if (abs(B) >= RC_EPSILON_GEOM) {
-            float t = -C / B;
-            if (t > RC_EPSILON_T) t1 = t;
+    float minT = MAX_DIST;
+    float discriminant = B * B - 4.0 * A * C;
+    if (discriminant >= 0.0) {
+        float sqrtDisc = sqrt(discriminant);
+        float t1 = (-B - sqrtDisc) / (2.0 * A);
+        float t2 = (-B + sqrtDisc) / (2.0 * A);
+        if (t1 > RC_EPSILON_T) {
+            float h = dot(rayOrigin + rayDir * t1 - coneApex, coneAxis);
+            if (h >= -RC_EPSILON_T && h <= coneHeight + RC_EPSILON_T) minT = min(minT, t1);
         }
-    } else {
-        float discriminant = B * B - 4.0 * A * C;
-        if (discriminant >= 0.0) {
-            float sqrtDisc = sqrt(discriminant);
-            float inv2A = 1.0 / (2.0 * A);
-            t1 = (-B - sqrtDisc) * inv2A;
-            t2 = (-B + sqrtDisc) * inv2A;
+        if (t2 > RC_EPSILON_T) {
+            float h = dot(rayOrigin + rayDir * t2 - coneApex, coneAxis);
+            if (h >= -RC_EPSILON_T && h <= coneHeight + RC_EPSILON_T) minT = min(minT, t2);
         }
     }
 
-    // Check cone surface intersections
-    if (t1 > RC_EPSILON_T) {
-         vec3 hit = rayOrigin + rayDir * t1;
-         float h = dot(hit - coneApex, coneAxis);
-         if (h >= -RC_EPSILON_T && h <= coneHeight + RC_EPSILON_T) return true;
-    }
-    if (t2 > RC_EPSILON_T) {
-         vec3 hit = rayOrigin + rayDir * t2;
-         float h = dot(hit - coneApex, coneAxis);
-         if (h >= -RC_EPSILON_T && h <= coneHeight + RC_EPSILON_T) return true;
-    }
-
-    // Check base cap intersection
     if (abs(rayDirDotAxis) > RC_EPSILON_GEOM) {
-         float t_base = (coneHeight - coDotAxis) / rayDirDotAxis;
-         if (t_base > RC_EPSILON_T) {
-             vec3 baseHit = rayOrigin + rayDir * t_base;
-             vec3 baseToApex = baseHit - coneApex;
-             // Check if point is within base circle
-             float baseDistSq = dot(baseToApex, baseToApex) - coneHeight * coneHeight; 
-             
-             float sinAngle = sqrt(max(0.0, 1.0 - cos2Angle));
-             float baseRadius = coneHeight * sinAngle / robustCosConeAngle;
-             
-             if (baseDistSq <= baseRadius * baseRadius + RC_EPSILON_T) return true;
-         }
+        float t_base = (coneHeight - coDotAxis) / rayDirDotAxis;
+        if (t_base > RC_EPSILON_T) {
+            vec3 baseHit = rayOrigin + rayDir * t_base;
+            vec3 baseToApex = baseHit - coneApex;
+            float baseDistSq = dot(baseToApex, baseToApex) - coneHeight * coneHeight;
+            float baseRadius = coneHeight * sqrt(max(0.0, 1.0 - cos2Angle)) / robustCosConeAngle;
+            if (baseDistSq <= baseRadius * baseRadius + RC_EPSILON_T) minT = min(minT, t_base);
+        }
     }
-
-    return false;
+    return minT;
 }
 
 void main() {
-    if (gl_LocalInvocationIndex == 0) {
-        s_TileLightCount = 0;
-    }
+    if (gl_LocalInvocationIndex == 0) s_TileLightCount = 0;
     barrier();
 
     uint tileX = gl_WorkGroupID.x;
     uint tileY = gl_WorkGroupID.y;
-    uint tileSize = 16;
-    
-    vec2 tileMin = vec2(tileX, tileY) * float(tileSize);
-    vec2 tileMax = vec2(tileX + 1, tileY + 1) * float(tileSize);
-    
-    // Frustum Planes
     vec2 invScreenSize = 1.0 / ScreenSize;
+    
+    vec2 tileMin = vec2(tileX, tileY) * 16.0;
+    vec2 tileMax = vec2(tileX + 1, tileY + 1) * 16.0;
+    
+    // GL Style NDC (Top=1.0)
     float minX = (tileMin.x * invScreenSize.x) * 2.0 - 1.0;
     float maxX = (tileMax.x * invScreenSize.x) * 2.0 - 1.0;
     float topY = 1.0 - (tileMin.y * invScreenSize.y) * 2.0;
@@ -185,77 +136,55 @@ void main() {
     vec4 vBL = invProj * vec4(minX, bottomY, 1.0, 1.0); vBL /= vBL.w;
     vec4 vBR = invProj * vec4(maxX, bottomY, 1.0, 1.0); vBR /= vBR.w;
     
-    // Precompute rays for this tile
-    vec3 dirTL = normalize(vTL.xyz);
-    vec3 dirTR = normalize(vTR.xyz);
-    vec3 dirBL = normalize(vBL.xyz);
-    vec3 dirBR = normalize(vBR.xyz);
-    vec3 dirC  = normalize(dirTL + dirBR); // Approx center
-
-    vec3 rayOrigin = vec3(0.0);
+    vec3 rays[5] = vec3[](normalize(vTL.xyz), normalize(vTR.xyz), normalize(vBL.xyz), normalize(vBR.xyz), normalize(vTL.xyz + vBR.xyz));
+    vec2 tileUV = (vec2(tileX, tileY) + 0.5) * 16.0 * invScreenSize;
+    
+    // Flip Y for HiZ sampling to match the GL-style rays (if Proj is Vulkan Y-down, rays are flipped V)
+    float tileMaxDepth = textureLod(sampler2D(HiZMap, HiZSampler), vec2(tileUV.x, 1.0 - tileUV.y), 4.0).r;
 
     uint threadCount = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
     uint passCount = (LightCount + threadCount - 1) / threadCount;
 
     for (uint i = 0; i < passCount; i++) {
         uint lightIdx = i * threadCount + gl_LocalInvocationIndex;
-        
         if (lightIdx < LightCount) {
             LightUniform light = Lights[lightIdx];
-            vec4 viewPos4 = View * vec4(light.Position.xyz, 1.0);
-            vec3 viewPos = viewPos4.xyz;
-            bool visible = false;
-            
             int type = int(light.Direction.w);
+            bool visible = false;
 
-            if (type == 1) { // Directional
+            if (type == 1) {
                 visible = true;
-            } 
-            else if (type == 0) { // Point (Ray Sphere Test)
+            } else {
+                vec3 viewPos = (View * vec4(light.Position.xyz, 1.0)).xyz;
                 float range = light.Position.w;
-                vec3 spherePos = viewPos;
-                
-                if (TestRaySphere(rayOrigin, dirTL, spherePos, range) ||
-                    TestRaySphere(rayOrigin, dirTR, spherePos, range) ||
-                    TestRaySphere(rayOrigin, dirBL, spherePos, range) ||
-                    TestRaySphere(rayOrigin, dirBR, spherePos, range) ||
-                    TestRaySphere(rayOrigin, dirC, spherePos, range)) {
-                    visible = true;
+                float minT = MAX_DIST;
+                vec3 bestRay = vec3(0);
+
+                for (int r = 0; r < 5; r++) {
+                    float t = (type == 0) ? IntersectRaySphere(vec3(0), rays[r], viewPos, range) : 
+                              IntersectRayCone(vec3(0), rays[r], viewPos, normalize(mat3(View) * light.Direction.xyz), cos(light.Params.y), range);
+                    if (t < minT) { minT = t; bestRay = rays[r]; }
+                }
+
+                if (minT <= 0.0) visible = true;
+                else if (minT < 1e19) {
+                    vec4 clip = Projection * vec4(bestRay * minT, 1.0);
+                    float d = clip.z / clip.w;
+                    if (d <= tileMaxDepth) visible = true;
                 }
             }
-            else if (type == 2) { // Spot (Ray Cone Test)
-                float range = light.Position.w;
-                float cosAngle = cos(light.Params.y);
-                
-                vec3 coneApex = viewPos;
-                vec3 coneAxis = normalize(mat3(View) * light.Direction.xyz);
-                
-                if (TestRayCone(rayOrigin, dirTL, coneApex, coneAxis, cosAngle, range) ||
-                    TestRayCone(rayOrigin, dirTR, coneApex, coneAxis, cosAngle, range) ||
-                    TestRayCone(rayOrigin, dirBL, coneApex, coneAxis, cosAngle, range) ||
-                    TestRayCone(rayOrigin, dirBR, coneApex, coneAxis, cosAngle, range) ||
-                    TestRayCone(rayOrigin, dirC, coneApex, coneAxis, cosAngle, range)) {
-                    visible = true;
-                }
-            }
-            
+
             if (visible) {
                 uint index = atomicAdd(s_TileLightCount, 1);
-                if (index < 1024) {
-                    s_TileLightIndices[index] = lightIdx;
-                }
+                if (index < 1024) s_TileLightIndices[index] = lightIdx;
             }
         }
     }
-    
     barrier();
-    
     if (gl_LocalInvocationIndex == 0) {
         uint count = s_TileLightCount;
         uint offset = atomicAdd(Counter, count);
         imageStore(LightGrid, ivec2(tileX, tileY), uvec4(offset, count, 0, 0));
-        for (uint i = 0; i < count; i++) {
-            LightIndices[offset + i] = s_TileLightIndices[i];
-        }
+        for (uint i = 0; i < count; i++) LightIndices[offset + i] = s_TileLightIndices[i];
     }
 }
