@@ -344,7 +344,7 @@ void main()
         lighting += contribution * shadow;
     }
 
-    vec3 ambient = baseColor.rgb * ao * 0.05;
+    vec3 ambient =vec3(0);// baseColor.rgb * ao * 0.05;
     vec3 finalColor = lighting + ambient + emissive;
 
     if (u_DebugMode == 1) {

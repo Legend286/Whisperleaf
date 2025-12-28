@@ -51,6 +51,7 @@ public class ShadowDataBuffer : IDisposable
 
     public ResourceLayout Layout => _layout;
     public ResourceSet ResourceSet => _resourceSet;
+    public DeviceBuffer Buffer => _buffer;
 
     public void Dispose()
     {

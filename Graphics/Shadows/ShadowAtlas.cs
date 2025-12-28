@@ -17,11 +17,11 @@ public class ShadowAtlas : IDisposable {
     private TextureView _textureView;
     private ResourceSet _resourceSet;
     private ResourceLayout _layout;
-
     public ResourceLayout ResourceLayout => _layout;
-
     private Sampler _sampler;
 
+    public TextureView TextureView => _textureView;
+    public Sampler ShadowSampler => _sampler;
     private const int TextureSize = 2048;
     private const int ArrayLayers = 16;
 

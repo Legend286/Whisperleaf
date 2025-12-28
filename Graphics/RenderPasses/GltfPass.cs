@@ -69,7 +69,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
 
     public ShadowAtlas? ShadowAtlas { get; set; }
 
-    public void SetHiZTexture(TextureView view)
+    public void SetHiZTexture(TextureView? view)
     {
         _hiZView = view;
         RecreateLightCullResourceSet();
@@ -102,6 +102,12 @@ public sealed class GltfPass : IRenderPass, IDisposable {
     public bool IsGizmoActive { get; set; }
 
     public ResourceSet? CsmResourceSet { get; set; }
+
+    public DeviceBuffer LightDataBuffer => _lightBuffer.DataBuffer;
+    public DeviceBuffer LightParamsBuffer => _lightBuffer.ParamBuffer;
+    public TextureView LightGridSampledView => _lightGridSampledView;
+    public DeviceBuffer LightIndexListBuffer => _lightIndexListBuffer;
+    public DeviceBuffer ShadowDataBuffer => _shadowDataBuffer.Buffer;
 
     public IReadOnlyList<MeshInstance> MeshInstances => _meshInstances;
     
@@ -307,7 +313,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         ResizeLightCullingResources(1280, 720);
     }
 
-    private void ResizeLightCullingResources(uint width, uint height)
+    public void ResizeLightCullingResources(uint width, uint height)
     {
         if (_lastScreenSize.X == width && _lastScreenSize.Y == height) return;
         _lastScreenSize = new Vector2(width, height);

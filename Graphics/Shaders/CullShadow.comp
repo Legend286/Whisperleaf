@@ -7,7 +7,7 @@ layout(std430, set = 0, binding = 0) readonly buffer ShadowFaces {
     mat4 u_ViewProjs[];
 };
 
-layout(std140, set = 1, binding = 0) buffer ModelTransforms {
+layout(set = 1, binding = 0) readonly buffer ModelTransforms {
     mat4 u_Model[];
 };
 
@@ -93,13 +93,27 @@ void main() {
     // Extract planes for this face
     mat4 M = u_ViewProjs[faceID];
     vec4 planes[6];
-    planes[0] = GetRow(M, 3) + GetRow(M, 0);
-    planes[1] = GetRow(M, 3) - GetRow(M, 0);
-    planes[2] = GetRow(M, 3) + GetRow(M, 1);
-    planes[3] = GetRow(M, 3) - GetRow(M, 1);
-    planes[4] = GetRow(M, 3) + GetRow(M, 2);
-    planes[5] = GetRow(M, 3) - GetRow(M, 2);
-    for (int i = 0; i < 6; i++) planes[i] /= length(planes[i].xyz);
+    
+    // Row 0: M[0][0], M[1][0], M[2][0], M[3][0]
+    vec4 r0 = vec4(M[0][0], M[1][0], M[2][0], M[3][0]);
+    // Row 1: M[0][1], M[1][1], M[2][1], M[3][1]
+    vec4 r1 = vec4(M[0][1], M[1][1], M[2][1], M[3][1]);
+    // Row 2: M[0][2], M[1][2], M[2][2], M[3][2]
+    vec4 r2 = vec4(M[0][2], M[1][2], M[2][2], M[3][2]);
+    // Row 3: M[0][3], M[1][3], M[2][3], M[3][3]
+    vec4 r3 = vec4(M[0][3], M[1][3], M[2][3], M[3][3]);
+
+    planes[0] = r3 + r0;
+    planes[1] = r3 - r0;
+    planes[2] = r3 + r1;
+    planes[3] = r3 - r1;
+    planes[4] = r3 + r2;
+    planes[5] = r3 - r2;
+    
+    for (int i = 0; i < 6; i++) {
+        float len = length(planes[i].xyz);
+        planes[i] /= (len > 1e-6) ? len : 1.0;
+    }
     
     if (IsAABBVisible(worldMin, worldMax, planes)) {
         // Unique range per face

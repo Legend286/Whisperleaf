@@ -157,20 +157,30 @@ void main() {
             } else {
                 vec3 viewPos = (View * vec4(light.Position.xyz, 1.0)).xyz;
                 float range = light.Position.w;
-                float minT = MAX_DIST;
-                vec3 bestRay = vec3(0);
+                vec3 coneAxis = normalize(mat3(View) * light.Direction.xyz);
+                float cosAngle = cos(light.Params.y);
 
+                bool intersects = false;
                 for (int r = 0; r < 5; r++) {
                     float t = (type == 0) ? IntersectRaySphere(vec3(0), rays[r], viewPos, range) : 
-                              IntersectRayCone(vec3(0), rays[r], viewPos, normalize(mat3(View) * light.Direction.xyz), cos(light.Params.y), range);
-                    if (t < minT) { minT = t; bestRay = rays[r]; }
+                              IntersectRayCone(vec3(0), rays[r], viewPos, coneAxis, cosAngle, range);
+                    if (t < 1e19) { 
+                        intersects = true; 
+                        break; 
+                    }
                 }
-
-                if (minT <= 0.0) visible = true;
-                else if (minT < 1e19) {
-                    vec4 clip = Projection * vec4(bestRay * minT, 1.0);
-                    float d = clip.z / clip.w;
-                    if (d <= tileMaxDepth) visible = true;
+                
+                if (intersects) {
+                    float closestZ = viewPos.z + range;
+                    vec4 clip = Projection * vec4(0.0, 0.0, closestZ, 1.0);
+                    
+                    if (clip.w <= 0.0) visible = true;
+                    else {
+                        float d = clip.z / clip.w;
+                        visible = (d <= tileMaxDepth);
+                    }
+                } else {
+                    visible = false;
                 }
             }
 

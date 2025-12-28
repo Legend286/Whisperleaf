@@ -24,5 +24,5 @@ void main() {
     float d2 = texelFetch(sampler2D(InputTexture, InputSampler), min(srcPos + ivec2(0, 1), maxPos), 0).r;
     float d3 = texelFetch(sampler2D(InputTexture, InputSampler), min(srcPos + ivec2(1, 1), maxPos), 0).r;
 
-    f_Depth = min(min(d0, d1), min(d2, d3));
+    f_Depth = max(max(d0, d1), max(d2, d3));
 }

@@ -38,6 +38,7 @@ public class Renderer
     private readonly SkyboxPass _skyboxPass;
     private readonly BloomPass _bloomPass;
     private readonly HiZPass _hiZPass;
+    private readonly VolumetricPass _volumetricPass;
 
     // Game View Resources
     private Framebuffer? _viewFramebuffer;
@@ -46,6 +47,7 @@ public class Renderer
     private Texture? _finalViewTexture;
     private TextureView? _viewTextureView;
     private Texture? _viewDepthTexture;
+    private TextureView? _viewDepthView;
     private readonly ViewportWindow _viewportWindow;
     public uint ViewportWidth { get; private set; }
     public uint ViewportHeight { get; private set; }
@@ -104,6 +106,7 @@ public class Renderer
         _skyboxPass = new SkyboxPass(_window.graphicsDevice, _scenePass.CameraBuffer, hdrOutputDesc);
         _bloomPass = new BloomPass(_window.graphicsDevice, ldrOutputDesc);
         _hiZPass = new HiZPass(_window.graphicsDevice);
+        _volumetricPass = new VolumetricPass(_window.graphicsDevice);
 
         _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice, hdrOutputDesc);
 
@@ -167,31 +170,47 @@ public class Renderer
         var swapchainFormat = _window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.ColorAttachments[0].Format;
         var depthFormat = PixelFormat.D32_Float_S8_UInt;
 
-        _viewTexture = factory.CreateTexture(TextureDescription.Texture2D(
-            width, height, 1, 1,
-            PixelFormat.R16_G16_B16_A16_Float,
-            TextureUsage.RenderTarget | TextureUsage.Sampled));
+                _viewTexture = factory.CreateTexture(TextureDescription.Texture2D(
+                    width, height, 1, 1,
+                    PixelFormat.R16_G16_B16_A16_Float,
+                    TextureUsage.RenderTarget | TextureUsage.Sampled | TextureUsage.Storage));
+                
+                _viewTextureView = factory.CreateTextureView(_viewTexture);
         
-        _viewTextureView = factory.CreateTextureView(_viewTexture);
-
-        _finalViewTexture = factory.CreateTexture(TextureDescription.Texture2D(
-            width, height, 1, 1,
-            swapchainFormat,
-            TextureUsage.RenderTarget | TextureUsage.Sampled));
-
-        _viewDepthTexture = factory.CreateTexture(TextureDescription.Texture2D(
-            width, height, 1, 1,
-            depthFormat,
-            TextureUsage.DepthStencil | TextureUsage.Sampled));
+                _finalViewTexture = factory.CreateTexture(TextureDescription.Texture2D(
+                    width, height, 1, 1,
+                    swapchainFormat,
+                    TextureUsage.RenderTarget | TextureUsage.Sampled));
         
-        _viewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(_viewDepthTexture, _viewTexture));
-        _finalViewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(null, _finalViewTexture));
-
-        _bloomPass.Resize(width, height);
-        _hiZPass.Resize(width, height);
-        _hiZPass.UpdateResources(_viewDepthTexture);
-        _scenePass.SetHiZTexture(_hiZPass.HiZTextureView);
-    }
+                _viewDepthTexture = factory.CreateTexture(TextureDescription.Texture2D(
+                    width, height, 1, 1,
+                    depthFormat,
+                    TextureUsage.DepthStencil | TextureUsage.Sampled));
+                
+                _viewDepthView?.Dispose();
+                _viewDepthView = factory.CreateTextureView(_viewDepthTexture);
+                
+                        _viewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(_viewDepthTexture, _viewTexture));
+                
+                        _finalViewFramebuffer = factory.CreateFramebuffer(new FramebufferDescription(null, _finalViewTexture));
+                
+                
+                
+                        _bloomPass.Resize(width, height);
+                
+                        _scenePass.SetHiZTexture(null); // Clear stale reference
+                
+                        _hiZPass.Resize(width, height);
+                
+                        _hiZPass.UpdateResources(_viewDepthTexture);
+                
+                        _scenePass.ResizeLightCullingResources(width, height);
+        
+                        _volumetricPass.UpdateResources(_viewTextureView, _viewDepthView, _scenePass, _scenePass.LightGridSampledView, _scenePass.LightIndexListBuffer);
+        
+                        _scenePass.SetHiZTexture(_hiZPass.HiZTextureView);
+        
+                    }
 
     public IntPtr GetGameViewTextureId()
     {
@@ -344,6 +363,10 @@ public class Renderer
                 }
                 
                 _skyboxPass.Render(_window.graphicsDevice, _cl, camera, screenSize, debugMode);
+                
+                _volumetricPass.Execute(_cl, _scenePass);
+
+                _cl.SetFramebuffer(_viewFramebuffer);
 
                 var stats = new Editor.RenderStats
                 {
@@ -459,6 +482,7 @@ public class Renderer
         _scenePass.Dispose();
         _depthPass.Dispose();
         _hiZPass.Dispose();
+        _volumetricPass.Dispose();
         _shadowPass.Dispose();
         _csmPass.Dispose();
         CsmAtlas.Dispose();
@@ -471,6 +495,7 @@ public class Renderer
         _finalViewTexture?.Dispose();
         _finalViewFramebuffer?.Dispose();
         _viewDepthTexture?.Dispose();
+        _viewDepthView?.Dispose();
         _viewFramebuffer?.Dispose();
         _immediateRenderer.Dispose();
         _editorManager.Dispose();
