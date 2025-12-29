@@ -186,6 +186,14 @@ public class InspectorWindow : EditorWindow
                 {
                     light.Intensity = intensity;
                 }
+                
+                // Volumetric Intensity
+                float volIntensity = light.VolumetricIntensity;
+                if (ImGui.SliderFloat("Volumetric Intensity", ref volIntensity, 0.0f, 10.0f))
+                {
+                    light.VolumetricIntensity = volIntensity;
+                    NodePropertyChanged?.Invoke();
+                }
 
                 if (type != 1) // Not directional
                 {

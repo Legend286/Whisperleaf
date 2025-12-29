@@ -223,11 +223,11 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         }
     }
 
-    public GltfPass(GraphicsDevice gd, ResourceLayout shadowAtlasLayout, ResourceLayout csmLayout, OutputDescription outputDescription) {
+    public GltfPass(GraphicsDevice gd, ResourceLayout shadowAtlasLayout, ResourceLayout csmLayout, OutputDescription outputDescription, CameraUniformBuffer cameraBuffer) {
         _gd = gd;
         _geometryBuffer = new GeometryBuffer(gd);
 
-        _cameraBuffer = new CameraUniformBuffer(gd);
+        _cameraBuffer = cameraBuffer;
         _modelBuffer = new ModelUniformBuffer(gd);
         _compactModelBuffer = new ModelUniformBuffer(gd);
         _lightBuffer = new LightUniformBuffer(gd);
@@ -988,7 +988,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         
         ResizeLightCullingResources((uint)screenSize.X, (uint)screenSize.Y);
         
-        _cameraBuffer.Update(gd, camera, screenSize, debugMode);
+        // _cameraBuffer.Update(gd, camera, screenSize, debugMode); // Updated by Renderer now
         
         CollectLights();
         _lightBuffer.UpdateGPU();
@@ -1353,7 +1353,8 @@ public sealed class GltfPass : IRenderPass, IDisposable {
                     dir,
                     innerDeg,
                     outerDeg,
-                    shadowIndex
+                    shadowIndex,
+                    node.Light.VolumetricIntensity
                 );
 
                 _lightBuffer.AddLight(light);
@@ -1366,7 +1367,7 @@ public sealed class GltfPass : IRenderPass, IDisposable {
         _dummyHiZ.Dispose();
         _dummyHiZView.Dispose();
         ClearResources();
-        _cameraBuffer.Dispose();
+        // CameraBuffer is shared/owned by Renderer
         _modelBuffer.Dispose();
         _compactModelBuffer.Dispose();
         _lightBuffer.Dispose();

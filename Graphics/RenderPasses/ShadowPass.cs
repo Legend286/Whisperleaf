@@ -18,42 +18,15 @@ public class ShadowPass : IDisposable {
     private readonly ResourceFactory _factory;
 
     // Pipelines
-    private readonly Pipeline _mdiPipeline;
+    private readonly Pipeline _shadowPipeline;
     private readonly Pipeline _alphaPipeline;
-    private readonly Pipeline _cullPipeline;
 
     // Buffers
-    private DeviceBuffer? _viewProjsBuffer; // StructuredBuffer of mat4 for Compute
-    private DeviceBuffer? _cullParamsBuffer; // Uniform for Compute
     private DeviceBuffer[] _drawCameraBuffers; // Uniform for Graphics (Per Face)
-    
-    private DeviceBuffer? _batchBuffer;
-    private DeviceBuffer? _instanceBatchMapBuffer;
-    private DeviceBuffer? _indirectCommandsBuffer;
-    private DeviceBuffer? _indirectCommandsStorageBuffer;
-    private DeviceBuffer? _visibleInstancesBuffer;
-
-    // Resource Sets
-    private ResourceSet? _viewProjsResourceSet;
-    private ResourceSet? _cullParamsResourceSet;
     private ResourceSet[] _drawCameraResourceSets;
-    private ResourceSet? _cullResourceSet;
-    private ResourceSet? _commandsResourceSet;
-    private ResourceSet? _visibleResourceSet;
-    
-    private readonly ResourceLayout _viewProjsLayout;
-    private readonly ResourceLayout _cullParamsLayout;
-    private readonly ResourceLayout _vpLayout; // Reused for Draw
-    private readonly ResourceLayout _modelLayout;
-    private readonly ResourceLayout _batchLayout;
-    private readonly ResourceLayout _commandsLayout;
-    private readonly ResourceLayout _visibleInstancesLayout;
+    private ResourceLayout _vpLayout; 
 
     // Scene Data
-    private readonly List<BatchInfo> _opaqueBatches = new();
-    private readonly List<uint> _instanceBatchMap = new();
-    private readonly List<AlphaTestInstance> _alphaInstances = new();
-    private int _totalOpaqueInstances;
     private int _lastSceneVersion = -1;
 
     private const int MaxFaces = 1024; 
@@ -71,40 +44,14 @@ public class ShadowPass : IDisposable {
         public int TransformIndex;
     }
 
-    public ShadowPass(GraphicsDevice gd) {
+    public ShadowPass(GraphicsDevice gd, ResourceLayout modelLayout) {
         _gd = gd;
         _factory = gd.ResourceFactory;
 
-        // 1. Layouts
-        _viewProjsLayout = _factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("ShadowFaces", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute)));
-        
-        _cullParamsLayout = _factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("CullParams", ResourceKind.UniformBuffer, ShaderStages.Compute)));
-
         _vpLayout = _factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("CameraBuffer", ResourceKind.UniformBuffer, ShaderStages.Vertex | ShaderStages.Compute)));
-
-        _modelLayout = _factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("ModelTransforms", ResourceKind.StructuredBufferReadWrite, ShaderStages.Vertex | ShaderStages.Compute)));
-
-        _batchLayout = _factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("BatchData", ResourceKind.StructuredBufferReadOnly, ShaderStages.Compute),
-            new ResourceLayoutElementDescription("InstanceBatchMap", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute)));
-
-        _commandsLayout = _factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("DrawCommands", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute | ShaderStages.Vertex)));
-
-        _visibleInstancesLayout = _factory.CreateResourceLayout(new ResourceLayoutDescription(
-            new ResourceLayoutElementDescription("VisibleInstances", ResourceKind.StructuredBufferReadWrite, ShaderStages.Compute | ShaderStages.Vertex)));
-
+            new ResourceLayoutElementDescription("CameraBuffer", ResourceKind.UniformBuffer, ShaderStages.Vertex)));
+        
         // 2. Buffers
-        _viewProjsBuffer = _factory.CreateBuffer(new BufferDescription(64 * MaxFaces, BufferUsage.StructuredBufferReadOnly, 64));
-        _viewProjsResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(_viewProjsLayout, _viewProjsBuffer));
-
-        _cullParamsBuffer = _factory.CreateBuffer(new BufferDescription(16, BufferUsage.UniformBuffer));
-        _cullParamsResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(_cullParamsLayout, _cullParamsBuffer));
-
         _drawCameraBuffers = new DeviceBuffer[MaxFaces];
         _drawCameraResourceSets = new ResourceSet[MaxFaces];
         for (int i = 0; i < MaxFaces; i++)
@@ -114,8 +61,7 @@ public class ShadowPass : IDisposable {
         }
 
         // 3. Shaders
-        var cullShader = ShaderCache.GetShader(_gd, ShaderStages.Compute, "Graphics/Shaders/CullShadow.comp");
-        var mdiVs = ShaderCache.GetShader(_gd, ShaderStages.Vertex, "Graphics/Shaders/ShadowMdi.vert");
+        var shadowVs = ShaderCache.GetShader(_gd, ShaderStages.Vertex, "Graphics/Shaders/Shadow.vert");
         var shadowFs = ShaderCache.GetShader(_gd, ShaderStages.Fragment, "Graphics/Shaders/Shadow.frag");
         var alphaVs = ShaderCache.GetShader(_gd, ShaderStages.Vertex, "Graphics/Shaders/ShadowAlpha.vert");
         var alphaFs = ShaderCache.GetShader(_gd, ShaderStages.Fragment, "Graphics/Shaders/ShadowAlpha.frag");
@@ -123,197 +69,46 @@ public class ShadowPass : IDisposable {
         // 4. Vertex Layouts
         var vertexLayout = new VertexLayoutDescription(
             48,
-            new VertexElementDescription("v_Position", VertexElementSemantic.Position, VertexElementFormat.Float3)
-        );
-
-        var alphaVertexLayout = new VertexLayoutDescription(
-            48,
             new VertexElementDescription("v_Position", VertexElementSemantic.Position, VertexElementFormat.Float3),
-            new VertexElementDescription("v_Normal", VertexElementSemantic.Normal, VertexElementFormat.Float3, 12),
-            new VertexElementDescription("v_Tangent", VertexElementSemantic.Normal, VertexElementFormat.Float4, 24),
-            new VertexElementDescription("v_TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2, 40)
+            new VertexElementDescription("v_Normal", VertexElementSemantic.Normal, VertexElementFormat.Float3),
+            new VertexElementDescription("v_Tangent", VertexElementSemantic.Normal, VertexElementFormat.Float4),
+            new VertexElementDescription("v_TexCoord", VertexElementSemantic.TextureCoordinate, VertexElementFormat.Float2)
         );
 
         // 5. Pipelines
         var depthFormat = PixelFormat.D32_Float_S8_UInt;
 
-        _cullPipeline = _factory.CreateComputePipeline(new ComputePipelineDescription(
-            cullShader,
-            new[] { _viewProjsLayout, _modelLayout, _batchLayout, _commandsLayout, _visibleInstancesLayout, _cullParamsLayout },
-            64, 1, 1));
-
-        _mdiPipeline = _factory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
+        // Opaque Pipeline (Standard Instancing)
+        _shadowPipeline = _factory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
             BlendStateDescription.SingleDisabled,
             DepthStencilStateDescription.DepthOnlyLessEqual,
             new RasterizerStateDescription(FaceCullMode.Front, PolygonFillMode.Solid, FrontFace.CounterClockwise, true, false),
             PrimitiveTopology.TriangleList,
-            new ShaderSetDescription(new[] { vertexLayout }, new[] { mdiVs, shadowFs }),
-            new[] { _vpLayout, _modelLayout, _visibleInstancesLayout },
+            new ShaderSetDescription(new[] { vertexLayout }, new[] { shadowVs, shadowFs }),
+            new[] { _vpLayout, modelLayout }, 
             new OutputDescription(new OutputAttachmentDescription(depthFormat))));
 
+        // Alpha Pipeline
         _alphaPipeline = _factory.CreateGraphicsPipeline(new GraphicsPipelineDescription(
             BlendStateDescription.SingleDisabled,
             DepthStencilStateDescription.DepthOnlyLessEqual,
             new RasterizerStateDescription(FaceCullMode.None, PolygonFillMode.Solid, FrontFace.Clockwise, true, false),
             PrimitiveTopology.TriangleList,
-            new ShaderSetDescription(new[] { alphaVertexLayout }, new[] { alphaVs, alphaFs }),
-            new[] { _vpLayout, _modelLayout, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout },
+            new ShaderSetDescription(new[] { vertexLayout }, new[] { alphaVs, alphaFs }),
+            new[] { _vpLayout, modelLayout, PbrLayout.MaterialLayout, PbrLayout.MaterialParamsLayout },
             new OutputDescription(new OutputAttachmentDescription(depthFormat))));
     }
 
     public void Update(GltfPass scene)
     {
-        if (scene.MeshInstances.Count == 0) return;
-        RefreshSceneBatches(scene);
-    }
-    
-    public void RefreshSceneBatches(GltfPass scene) {
-        if (_lastSceneVersion == scene.StructureVersion) return;
-        _lastSceneVersion = scene.StructureVersion;
-
-        _opaqueBatches.Clear();
-        _instanceBatchMap.Clear();
-        _alphaInstances.Clear();
-        _totalOpaqueInstances = 0;
-
-        for (int i = 0; i < scene.MeshInstances.Count; i++) {
-            var inst = scene.MeshInstances[i];
-            var mat = scene.GetMaterial(inst.MaterialIndex);
-
-            if (mat != null && (mat.AlphaMode == AlphaMode.Mask || mat.AlphaMode == AlphaMode.Blend)) {
-                _alphaInstances.Add(new AlphaTestInstance {
-                    Mesh = inst.Mesh,
-                    Material = mat,
-                    TransformIndex = inst.TransformIndex
-                });
-            } else {
-                if (_opaqueBatches.Count == 0 || _opaqueBatches[^1].MeshIndex != (uint)inst.Mesh.GetHashCode()) {
-                    _opaqueBatches.Add(new BatchInfo(
-                        (uint)i,
-                        0,
-                        (uint)i,
-                        (uint)inst.Mesh.GetHashCode(),
-                        inst.Mesh.AABBMin,
-                        inst.Mesh.AABBMax));
-                }
-
-                var b = _opaqueBatches[^1];
-                b.InstanceCount++;
-                _opaqueBatches[^1] = b;
-
-                _instanceBatchMap.Add((uint)_opaqueBatches.Count - 1);
-                _totalOpaqueInstances++;
-            }
-        }
-
-        RecreateBuffers();
-    }
-
-    private void RecreateBuffers() {
-        _gd.WaitForIdle();
-        _batchBuffer?.Dispose();
-        _instanceBatchMapBuffer?.Dispose();
-        _indirectCommandsBuffer?.Dispose();
-        _indirectCommandsStorageBuffer?.Dispose();
-        _visibleInstancesBuffer?.Dispose();
-        _cullResourceSet?.Dispose();
-        _commandsResourceSet?.Dispose();
-        _visibleResourceSet?.Dispose();
-
-        if (_opaqueBatches.Count == 0) return;
-
-        _batchBuffer = _factory.CreateBuffer(new BufferDescription(
-            (uint)(_opaqueBatches.Count * Marshal.SizeOf<BatchInfo>()), 
-            BufferUsage.StructuredBufferReadWrite, 
-            (uint)Marshal.SizeOf<BatchInfo>()));
-        _gd.UpdateBuffer(_batchBuffer, 0, _opaqueBatches.ToArray());
-
-        _instanceBatchMapBuffer = _factory.CreateBuffer(new BufferDescription(
-            (uint)(_instanceBatchMap.Count * 4), 
-            BufferUsage.StructuredBufferReadWrite, 
-            4));
-        _gd.UpdateBuffer(_instanceBatchMapBuffer, 0, _instanceBatchMap.ToArray());
-
-        _indirectCommandsStorageBuffer = _factory.CreateBuffer(new BufferDescription(
-            (uint)(_opaqueBatches.Count * 20 * MaxFaces), 
-            BufferUsage.StructuredBufferReadWrite, 20));
-
-        _indirectCommandsBuffer = _factory.CreateBuffer(new BufferDescription(
-            (uint)(_opaqueBatches.Count * 20 * MaxFaces), 
-            BufferUsage.IndirectBuffer, 0));
-
-        _visibleInstancesBuffer = _factory.CreateBuffer(new BufferDescription(
-            (uint)(_totalOpaqueInstances * 4 * MaxFaces), 
-            BufferUsage.StructuredBufferReadWrite, 4));
-
-        _cullResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
-            _batchLayout, _batchBuffer, _instanceBatchMapBuffer));
-
-        _commandsResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
-            _commandsLayout, _indirectCommandsStorageBuffer));
-
-        _visibleResourceSet = _factory.CreateResourceSet(new ResourceSetDescription(
-            _visibleInstancesLayout, _visibleInstancesBuffer));
+        // No heavy update needed anymore since we just iterate instances
     }
 
     public void Render(GraphicsDevice gd, CommandList cl, ShadowAtlas atlas, GltfPass scene) {
         if (scene.MeshInstances.Count == 0) return;
 
-        if (_totalOpaqueInstances == 0 && _alphaInstances.Count == 0) return;
-
         var allocatedNodes = new List<SceneNode>(atlas.GetAllocatedNodes());
         if (allocatedNodes.Count == 0) return;
-
-        // --- PHASE 1: UNIFIED COMPUTE CULLING ---
-        var allFaces = new List<ShadowAtlas.ShadowAllocation>();
-        foreach (var node in allocatedNodes) {
-            var allocs = atlas.GetAllocations(node);
-            if (allocs != null) allFaces.AddRange(allocs);
-        }
-
-        if (allFaces.Count == 0) return;
-        int activeFaces = Math.Min(allFaces.Count, MaxFaces);
-
-        // Upload all matrices
-        var matrices = new Matrix4x4[activeFaces];
-        for (int i = 0; i < activeFaces; i++) matrices[i] = allFaces[i].ViewProj;
-        cl.UpdateBuffer(_viewProjsBuffer, 0, matrices);
-
-        // Initial Commands
-        var initialCommands = new IndirectDrawIndexedArguments[_opaqueBatches.Count * activeFaces];
-        for (int f = 0; f < activeFaces; f++) {
-            for (int b = 0; b < _opaqueBatches.Count; b++) {
-                int idx = f * _opaqueBatches.Count + b;
-                var batch = _opaqueBatches[b];
-                initialCommands[idx] = new IndirectDrawIndexedArguments {
-                    IndexCount = scene.MeshInstances[(int)batch.InstanceStart].Mesh.Range.IndexCount,
-                    InstanceCount = 0,
-                    FirstIndex = scene.MeshInstances[(int)batch.InstanceStart].Mesh.Range.IndexStart,
-                    VertexOffset = scene.MeshInstances[(int)batch.InstanceStart].Mesh.Range.VertexOffset,
-                    FirstInstance = (uint)(f * _totalOpaqueInstances) + batch.VisibleOffset
-                };
-            }
-        }
-        cl.UpdateBuffer(_indirectCommandsStorageBuffer, 0, initialCommands);
-
-        var paramsData = new CullParams {
-            TotalInstances = (uint)_totalOpaqueInstances,
-            NumBatches = (uint)_opaqueBatches.Count
-        };
-        cl.UpdateBuffer(_cullParamsBuffer, 0, ref paramsData);
-
-        cl.SetPipeline(_cullPipeline);
-        cl.SetComputeResourceSet(0, _viewProjsResourceSet);
-        cl.SetComputeResourceSet(1, scene.ModelBuffer.ResourceSet);
-        cl.SetComputeResourceSet(2, _cullResourceSet);
-        cl.SetComputeResourceSet(3, _commandsResourceSet);
-        cl.SetComputeResourceSet(4, _visibleResourceSet);
-        cl.SetComputeResourceSet(5, _cullParamsResourceSet);
-        
-        cl.Dispatch((uint)(_totalOpaqueInstances + 63) / 64, (uint)activeFaces, 1);
-
-        // --- PHASE 2: DRAWING ---
-        cl.CopyBuffer(_indirectCommandsStorageBuffer, 0, _indirectCommandsBuffer, 0, (uint)(initialCommands.Length * 20));
 
         int faceIdx = 0;
         foreach (var node in allocatedNodes) {
@@ -321,7 +116,7 @@ public class ShadowPass : IDisposable {
             if (allocs == null) continue;
 
             foreach (var alloc in allocs) {
-                if (faceIdx >= activeFaces) break;
+                if (faceIdx >= MaxFaces) break;
                 RenderShadowMap(cl, atlas, scene, alloc, faceIdx);
                 faceIdx++;
             }
@@ -340,71 +135,119 @@ public class ShadowPass : IDisposable {
         var fb = atlas.GetFramebuffer(alloc.PageIndex);
         cl.SetFramebuffer(fb);
         cl.SetViewport(0, new Viewport(alloc.AtlasX * alloc.TileSize, alloc.AtlasY * alloc.TileSize, alloc.TileSize, alloc.TileSize, 0, 1));
+        
+        cl.SetVertexBuffer(0, scene.GeometryBuffer.VertexBuffer);
+        cl.SetIndexBuffer(scene.GeometryBuffer.IndexBuffer, IndexFormat.UInt32);
 
-        // 1. Opaque Path (MDI)
-        if (_totalOpaqueInstances > 0 && _indirectCommandsBuffer != null) {
-            cl.SetPipeline(_mdiPipeline);
-            cl.SetGraphicsResourceSet(0, _drawCameraResourceSets[faceIdx]);
-            cl.SetGraphicsResourceSet(1, scene.ModelBuffer.ResourceSet);
-            cl.SetGraphicsResourceSet(2, _visibleResourceSet);
+        // Cull instances against this shadow face frustum
+        var frustum = new Frustum(alloc.ViewProj);
+        // Note: Ideally use BVH here, but for simplicity/robustness as requested, we iterate.
+        // Or better, query the scene BVH.
+        var (visibleIndices, stats) = scene.Query(frustum);
+        visibleIndices.Sort();
 
-            cl.SetVertexBuffer(0, scene.GeometryBuffer.VertexBuffer);
-            cl.SetIndexBuffer(scene.GeometryBuffer.IndexBuffer, IndexFormat.UInt32);
+        // Separate opaque and alpha batches
+        // Since GltfPass sorts by material/mesh, we can batch easily.
+        
+        // 1. Opaque Pass
+        cl.SetPipeline(_shadowPipeline);
+        cl.SetGraphicsResourceSet(0, _drawCameraResourceSets[faceIdx]);
+        cl.SetGraphicsResourceSet(1, scene.ModelBuffer.ResourceSet); // Bind ALL models
+        
+        DrawBatches(cl, scene, visibleIndices, false);
 
-            uint cmdOffsetInBytes = (uint)(faceIdx * _opaqueBatches.Count * 20);
-            cl.DrawIndexedIndirect(_indirectCommandsBuffer, cmdOffsetInBytes, (uint)_opaqueBatches.Count, 20);
-        }
+        // 2. Alpha Pass
+        cl.SetPipeline(_alphaPipeline);
+        cl.SetGraphicsResourceSet(0, _drawCameraResourceSets[faceIdx]);
+        cl.SetGraphicsResourceSet(1, scene.ModelBuffer.ResourceSet);
 
-        // 2. Alpha Path (Direct)
-        if (_alphaInstances.Count > 0) {
-            cl.SetPipeline(_alphaPipeline);
-            cl.SetGraphicsResourceSet(0, _drawCameraResourceSets[faceIdx]);
-            cl.SetGraphicsResourceSet(1, scene.ModelBuffer.ResourceSet);
-            cl.SetVertexBuffer(0, scene.GeometryBuffer.VertexBuffer);
-            cl.SetIndexBuffer(scene.GeometryBuffer.IndexBuffer, IndexFormat.UInt32);
+        DrawBatches(cl, scene, visibleIndices, true);
+    }
+    
+    private void DrawBatches(CommandList cl, GltfPass scene, List<int> visibleIndices, bool alphaPass)
+    {
+        int listIndex = 0;
+        while (listIndex < visibleIndices.Count)
+        {
+            int instanceIdx = visibleIndices[listIndex];
+            
+            // Skip lights
+            if (instanceIdx >= scene.MeshInstances.Count) {
+                listIndex++;
+                continue;
+            }
+            
+            var inst = scene.MeshInstances[instanceIdx];
+            var mat = scene.GetMaterial(inst.MaterialIndex);
+            bool isAlpha = mat != null && (mat.AlphaMode == AlphaMode.Mask || mat.AlphaMode == AlphaMode.Blend);
+            
+            if (isAlpha != alphaPass) {
+                listIndex++;
+                continue;
+            }
+            
+            // Start batch
+            var batchMesh = inst.Mesh;
+            int batchMaterialIndex = inst.MaterialIndex;
+            int startInstanceIdx = instanceIdx;
+            int instanceCount = 0;
+            
+            // Accumulate consecutive instances of same mesh/mat
+            // Note: Since we are iterating a sorted list of visible indices, 
+            // but the original indices are sorted by mesh/mat, 
+            // consecutive visible indices *might* not be consecutive in the original list.
+            // BUT: DrawIndexed(..., firstInstance) requires a block of transforms in the buffer?
+            // Actually, we use gl_InstanceIndex to index into u_Models.
+            // If we use standard DrawIndexed(..., firstInstance), then u_Models[firstInstance + i] is accessed.
+            // This requires the instances to be contiguous in the model buffer.
+            // GltfPass sorts instances, so they ARE contiguous in buffer.
+            // But 'visibleIndices' might skip some.
+            // So we can't batch efficiently with simple instancing unless we repack the buffer (MDI approach) 
+            // OR if we draw one by one.
+            
+            // "make it draw using regular instanced drawcalls same path as alphatest"
+            // The alpha path usually draws one by one because materials differ.
+            // If we revert to drawing one by one (or batching identical *contiguous* visible instances), it's safer.
+            
+            // Check if next visible instance is exactly next in buffer (contiguous range)
+            while (listIndex < visibleIndices.Count) {
+                int nextIdx = visibleIndices[listIndex];
+                if (nextIdx >= scene.MeshInstances.Count) break;
+                
+                var nextInst = scene.MeshInstances[nextIdx];
+                if (nextInst.Mesh != batchMesh || nextInst.MaterialIndex != batchMaterialIndex) break; // Mesh/Mat changed
+                
+                // For valid instancing with 'firstInstance', indices must be sequential: nextIdx == prevIdx + 1
+                // If there's a gap (culled instance), we must break batch or use a remapped buffer (which we don't have here).
+                // So: check continuity.
+                if (instanceCount > 0 && nextIdx != (startInstanceIdx + instanceCount)) break;
 
-            foreach (var inst in _alphaInstances) {
-                if (inst.Material.ResourceSet != null && inst.Material.ParamsResourceSet != null) {
-                    cl.SetGraphicsResourceSet(2, inst.Material.ResourceSet);
-                    cl.SetGraphicsResourceSet(3, inst.Material.ParamsResourceSet);
-
-                    cl.DrawIndexed(
-                        inst.Mesh.Range.IndexCount,
-                        1,
-                        inst.Mesh.Range.IndexStart,
-                        inst.Mesh.Range.VertexOffset,
-                        (uint)inst.TransformIndex);
+                instanceCount++;
+                listIndex++;
+            }
+            
+            if (instanceCount > 0) {
+                if (alphaPass && mat != null) {
+                    cl.SetGraphicsResourceSet(2, mat.ResourceSet);
+                    cl.SetGraphicsResourceSet(3, mat.ParamsResourceSet);
                 }
+                
+                cl.DrawIndexed(
+                    batchMesh.Range.IndexCount,
+                    (uint)instanceCount,
+                    batchMesh.Range.IndexStart,
+                    batchMesh.Range.VertexOffset,
+                    (uint)startInstanceIdx // Maps to u_Models[startInstanceIdx]
+                );
             }
         }
     }
 
     public void Dispose() {
-        _mdiPipeline.Dispose();
+        _shadowPipeline.Dispose();
         _alphaPipeline.Dispose();
-        _cullPipeline.Dispose();
-        _viewProjsBuffer?.Dispose();
-        _viewProjsResourceSet?.Dispose();
-        _cullParamsBuffer?.Dispose();
-        _cullParamsResourceSet?.Dispose();
-        
         foreach (var b in _drawCameraBuffers) b?.Dispose();
         foreach (var s in _drawCameraResourceSets) s?.Dispose();
-
-        _batchBuffer?.Dispose();
-        _instanceBatchMapBuffer?.Dispose();
-        _indirectCommandsBuffer?.Dispose();
-        _indirectCommandsStorageBuffer?.Dispose();
-        _visibleInstancesBuffer?.Dispose();
-        _cullResourceSet?.Dispose();
-        _commandsResourceSet?.Dispose();
-        _visibleResourceSet?.Dispose();
-        _viewProjsLayout.Dispose();
-        _cullParamsLayout.Dispose();
         _vpLayout.Dispose();
-        _modelLayout.Dispose();
-        _batchLayout.Dispose();
-        _commandsLayout.Dispose();
-        _visibleInstancesLayout.Dispose();
     }
 }

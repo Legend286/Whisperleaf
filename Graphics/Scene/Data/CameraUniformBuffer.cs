@@ -14,20 +14,16 @@ namespace Whisperleaf.Graphics.Scene.Data
         {
             var factory = gd.ResourceFactory;
 
+            _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
+                new ResourceLayoutElementDescription(
+                    "CameraBuffer",
+                    ResourceKind.UniformBuffer,
+                    ShaderStages.Vertex | ShaderStages.Fragment | ShaderStages.Compute)));
+
             _buffer = factory.CreateBuffer(new BufferDescription(
                 (uint)Marshal.SizeOf<CameraUniform>(),
                 BufferUsage.UniformBuffer | BufferUsage.Dynamic));
-
-                        _layout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-
-                            new ResourceLayoutElementDescription(
-
-                                "CameraBuffer",
-
-                                ResourceKind.UniformBuffer,
-
-                                ShaderStages.Vertex | ShaderStages.Fragment | ShaderStages.Compute)));
-
+            
             _resourceSet = factory.CreateResourceSet(new ResourceSetDescription(_layout, _buffer));
         }
 
@@ -38,6 +34,11 @@ namespace Whisperleaf.Graphics.Scene.Data
             var camPos = camera.Position;
 
             var data = new CameraUniform(view, proj, camPos, screenSize, debugMode);
+            gd.UpdateBuffer(_buffer, 0, ref data);
+        }
+
+        public void Update(GraphicsDevice gd, ref CameraUniform data)
+        {
             gd.UpdateBuffer(_buffer, 0, ref data);
         }
 

@@ -52,6 +52,16 @@ layout(std430, set = 0, binding = 9) readonly buffer ShadowDataBuffer {
     ShadowData Shadows[];
 };
 
+layout(set = 1, binding = 0) uniform texture2DArray CsmShadowMap;
+layout(set = 1, binding = 1) uniform sampler CsmShadowSampler;
+
+layout(std140, set = 1, binding = 2) uniform CsmData {
+    mat4 CascadeViewProj[4];
+    vec4 CascadeSplits;
+};
+
+const int CascadeCount = 4; // Hardcoded to match C# struct which has 4 splits
+
 const float PI = 3.14159265359;
 const float MAX_DIST = 1e20;
 
@@ -73,6 +83,31 @@ float GetShadow(int shadowIndex, vec3 worldPos) {
 
     vec2 atlasUV = projCoords.xy * sd.Sprite.z + sd.Sprite.xy;
     float shadowDepth = texture(sampler2DArray(ShadowAtlas, ShadowSampler), vec3(atlasUV, sd.Sprite.w)).r;
+    return (projCoords.z > shadowDepth) ? 0.0 : 1.0;
+}
+
+float GetShadowCSM(vec3 worldPos, float viewDepth) {
+    int cascadeIndex = -1;
+    for (int i = 0; i < CascadeCount; i++) {
+        if (viewDepth < CascadeSplits[i]) {
+            cascadeIndex = i;
+            break;
+        }
+    }
+    if (cascadeIndex == -1) return 1.0;
+
+    vec4 posLight = CascadeViewProj[cascadeIndex] * vec4(worldPos, 1.0);
+
+    if (posLight.w <= 0.0)
+    return 1.0;
+
+    vec3 projCoords = posLight.xyz / posLight.w;
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    projCoords.y = 1.0 - projCoords.y;
+    
+    // Use sampler2DArray for CSM (array texture)
+    float shadowDepth = texture(sampler2DArray(CsmShadowMap, CsmShadowSampler), vec3(projCoords.xy, cascadeIndex)).r;
+    
     return (projCoords.z > shadowDepth) ? 0.0 : 1.0;
 }
 
@@ -442,18 +477,19 @@ void main() {
 
     vec3 accumColor = vec3(0.0);
     float density = 0.1;
+    float dirDensity = 0.1; // Reduced density for directional lights
 
     // Directional Lights (Global)
     for (uint i = 0; i < LightCount; i++) {
         LightUniform l = Lights[i];
         if (int(l.Direction.w) == 1) { // Directional
             float tStart = 0.0;
-            float tEnd = sceneDist;
+            float tEnd = min(sceneDist, 64.0); // Clamp max distance to avoid sky blowout
             float rayLen = tEnd - tStart;
 
             if (rayLen > 0.001) {
-                float targetStep = 0.1; // Larger step for global fog
-                int steps = int(clamp(rayLen / targetStep, 8.0, 64.0));
+                float targetStep = 0.5; // Larger step for global fog
+                int steps = int(clamp(rayLen / targetStep, 16.0, 64.0));
                 float stepSize = rayLen / float(steps);
 
                 // Dithering / Noise
@@ -464,10 +500,17 @@ void main() {
                     if (t > tEnd) break;
                     vec3 p = rayOrigin + rayDir * t;
                     
-                    float shadow = GetShadow(int(l.Params.z), p);
+                    // Calculate view space depth for CSM selection
+                    vec4 viewPosP = View * vec4(p, 1.0);
+                    float viewDepthP = -viewPosP.z;
+                    
+                    float shadow = GetShadowCSM(p, viewDepthP);
                     float phase = PhaseHG(dot(rayDir, l.Direction.xyz), 0.5);
                     
-                    accumColor += l.Color.xyz * l.Color.w * shadow * phase * density * stepSize;
+                    // Use per-light volumetric intensity
+                    float intensity = l.Color.w * l.Params.w * 0.25f; 
+                    
+                    accumColor += l.Color.xyz * intensity * shadow * phase * dirDensity * stepSize;
                     t += stepSize;
                 }
             }
@@ -550,7 +593,7 @@ void main() {
                     float shadow = GetShadow(shadowIdx + face, p);
                     float phase = PhaseHG(dot(rayDir, Ldir), 0.5);
                     
-                    accumColor += l.Color.xyz * l.Color.w * atten * shadow * phase * density * stepSize;
+                    accumColor += l.Color.xyz * l.Color.w * l.Params.w * atten * shadow * phase * density * stepSize;
                 }
                 t += stepSize;
             }

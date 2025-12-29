@@ -58,7 +58,7 @@ public class MaterialPreviewRenderer : IDisposable
     public uint Width => _colorTarget?.Width ?? 0;
     public uint Height => _colorTarget?.Height ?? 0;
 
-    public MaterialPreviewRenderer(GraphicsDevice gd, Renderer renderer)
+    public MaterialPreviewRenderer(GraphicsDevice gd)
     {
         _gd = gd;
         var factory = gd.ResourceFactory;

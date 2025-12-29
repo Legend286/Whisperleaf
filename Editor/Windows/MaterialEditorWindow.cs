@@ -49,7 +49,7 @@ public class MaterialEditorWindow : EditorWindow, IDisposable
         _gd = gd;
         IsOpen = false; // Closed by default
         _currentMaterial = new MaterialAsset();
-        _previewRenderer = new MaterialPreviewRenderer(gd, renderer);
+        _previewRenderer = new MaterialPreviewRenderer(gd);
         Viewport = new MaterialViewportWindow(_previewRenderer, Window.Instance);
         
         Viewport.OnMeshDropped += meshPath =>

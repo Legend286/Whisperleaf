@@ -22,7 +22,7 @@ public class VolumetricPass : IDisposable
     private DeviceBuffer _cachedLightIndicesBuffer;
     private DeviceBuffer _cachedShadowDataBuffer;
 
-    public VolumetricPass(GraphicsDevice gd)
+    public VolumetricPass(GraphicsDevice gd, ResourceLayout csmLayout)
     {
         _gd = gd;
         _factory = gd.ResourceFactory;
@@ -53,7 +53,7 @@ public class VolumetricPass : IDisposable
             new ShaderSetDescription(
                 new VertexLayoutDescription[] {}, 
                 new[] { vertShader, fragShader }),
-            new[] { _layout },
+            new[] { _layout, csmLayout },
             new OutputDescription(null, new OutputAttachmentDescription(PixelFormat.R16_G16_B16_A16_Float))
         ));
 
@@ -120,6 +120,10 @@ public class VolumetricPass : IDisposable
         cl.SetFullScissorRects();
         cl.SetPipeline(_pipeline);
         cl.SetGraphicsResourceSet(0, _resourceSet);
+        if (gltfPass.CsmResourceSet != null)
+        {
+            cl.SetGraphicsResourceSet(1, gltfPass.CsmResourceSet);
+        }
         cl.Draw(3, 1, 0, 0);
     }
 

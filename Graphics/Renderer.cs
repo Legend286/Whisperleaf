@@ -39,6 +39,10 @@ public class Renderer
     private readonly BloomPass _bloomPass;
     private readonly HiZPass _hiZPass;
     private readonly VolumetricPass _volumetricPass;
+    public static ulong FrameCount { get; private set; }
+    public CameraUniformBuffer MainCameraBuffer { get; }
+    
+    private Fence _frameFence;
 
     // Game View Resources
     private Framebuffer? _viewFramebuffer;
@@ -82,9 +86,13 @@ public class Renderer
     {
         _window = window;
         _cl = _window.graphicsDevice.ResourceFactory.CreateCommandList();
+        
         PbrLayout.Initialize(_window.graphicsDevice);
         
         Physics = new PhysicsThread();
+        _frameFence = _window.graphicsDevice.ResourceFactory.CreateFence(true);
+        
+        MainCameraBuffer = new CameraUniformBuffer(_window.graphicsDevice);
         
         ShadowAtlas = new ShadowAtlas(_window.graphicsDevice);
         CsmAtlas = new CsmAtlas(_window.graphicsDevice);
@@ -98,15 +106,15 @@ public class Renderer
             null,
             new OutputAttachmentDescription(_window.graphicsDevice.MainSwapchain.Framebuffer.OutputDescription.ColorAttachments[0].Format));
 
-        _scenePass = new GltfPass(_window.graphicsDevice, ShadowAtlas.ResourceLayout, _csmUniformBuffer.Layout, hdrOutputDesc);
+        _scenePass = new GltfPass(_window.graphicsDevice, ShadowAtlas.ResourceLayout, _csmUniformBuffer.Layout, hdrOutputDesc, MainCameraBuffer);
         _scenePass.CsmResourceSet = _csmUniformBuffer.ResourceSet;
         _scenePass.ShadowAtlas = ShadowAtlas;
-        _shadowPass = new ShadowPass(_window.graphicsDevice);
+        _shadowPass = new ShadowPass(_window.graphicsDevice, _scenePass.ModelBuffer.Layout);
         _csmPass = new CsmPass(_window.graphicsDevice);
-        _skyboxPass = new SkyboxPass(_window.graphicsDevice, _scenePass.CameraBuffer, hdrOutputDesc);
+        _skyboxPass = new SkyboxPass(_window.graphicsDevice, MainCameraBuffer, hdrOutputDesc);
         _bloomPass = new BloomPass(_window.graphicsDevice, ldrOutputDesc);
         _hiZPass = new HiZPass(_window.graphicsDevice);
-        _volumetricPass = new VolumetricPass(_window.graphicsDevice);
+        _volumetricPass = new VolumetricPass(_window.graphicsDevice, CsmLayout);
 
         _immediateRenderer = new ImmediateRenderer(_window.graphicsDevice, hdrOutputDesc);
 
@@ -133,7 +141,7 @@ public class Renderer
 
         PerformResize(ViewportWidth, ViewportHeight);
 
-        _depthPass = new DepthPass(_window.graphicsDevice, _viewFramebuffer!, _scenePass.CameraBuffer);
+        _depthPass = new DepthPass(_window.graphicsDevice, _viewFramebuffer!, MainCameraBuffer);
 
         _viewportWindow = new ViewportWindow(this, _window);
         _editorManager.AddWindow(_viewportWindow);
@@ -259,6 +267,11 @@ public class Renderer
                 continue;
             }
 
+            _window.graphicsDevice.WaitForFence(_frameFence);
+            _window.graphicsDevice.ResetFence(_frameFence);
+
+            _cl.Begin();
+
             onUpdate?.Invoke(Time.DeltaTime);
 
             ShowLightHeatmap = _editorManager.ShowLightHeatmap;
@@ -310,6 +323,11 @@ public class Renderer
             _scenePass.UpdateModelBuffer();
 
             // Prepare Resources (GD Update - before CL)
+            if (camera != null)
+            {
+                MainCameraBuffer.Update(_window.graphicsDevice, camera, screenSize, debugMode);
+            }
+            
             _scenePass.PrepareResources(_window.graphicsDevice, camera, screenSize, debugMode);
 
             _shadowPass.Update(_scenePass);
@@ -317,8 +335,7 @@ public class Renderer
 
             // Parallel Render Passes (Shadows, CSM, Depth) - RECORDING
             // Combine all commands into one list
-            _cl.Begin();
-
+            
             // 0. Render Material Preview (integrated into main CL)
             _editorManager.RenderPreview(_cl);
 
@@ -402,10 +419,11 @@ public class Renderer
             _editorManager.Render(_cl);
 
             _cl.End();
-            _window.graphicsDevice.SubmitCommands(_cl);
-            _window.graphicsDevice.WaitForIdle();
-
+            _window.graphicsDevice.SubmitCommands(_cl, _frameFence);
+            
             _window.graphicsDevice.SwapBuffers(_window.graphicsDevice.MainSwapchain);
+            
+            FrameCount++;
         }
     }
 
@@ -478,7 +496,10 @@ public class Renderer
 
     public void Dispose()
     {
+        _window.graphicsDevice.WaitForIdle();
+        _frameFence.Dispose();
         Physics.Dispose();
+        MainCameraBuffer.Dispose();
         _scenePass.Dispose();
         _depthPass.Dispose();
         _hiZPass.Dispose();
